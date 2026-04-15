@@ -39,6 +39,20 @@ Both r/soccer title formats are valid (with and without score brackets). Scoring
 
 Docker via docker-compose for hosting. All configuration driven by environment variables in docker-compose.yml (twelve-factor). SQLite persisted via volume mount (`./data:/app/data`). Single container with `restart: unless-stopped`. No config.toml or separate config files. Files created: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `README.md`; updated `docs/architecture.md`.
 
+### Implementation Decisions
+- **Author:** Fry (Backend Dev)
+- **Date:** 2026-04-15
+- **Status:** Applied
+
+Seven implementation decisions made during full system build: setuptools over poetry for pip-compatible builds; in-memory goal tracking in poller with SQLite dedup as fallback; keyword-based Reddit search using scorer surname + team names; streamff page parsing via regex with yt-dlp fallback; time-based exponential backoff for retries; DB_PATH and TEMP_DIR env vars for flexible paths; Telegram cleanup in `finally` block to prevent disk buildup.
+
+### Fix aiosqlite Dependency Conflict
+- **Author:** Hermes (Tester)
+- **Date:** 2026-04-15
+- **Status:** Applied
+
+Changed `aiosqlite>=0.20` to `aiosqlite<=0.17` in pyproject.toml to resolve conflict with asyncpraw's `aiosqlite<=0.17.0` requirement. No code changes needed — aiosqlite 0.17 API covers all usage in `store.py`. All 77 tests pass.
+
 ## Governance
 
 - All meaningful changes require team consensus
