@@ -36,7 +36,7 @@ Single external data dependency: **Reddit** (r/soccer). No football API.
 
 **Source:** Always **r/soccer/new** — hardcoded, not configurable.
 
-**Approach:** Poll `r/soccer/new` via asyncpraw every ~30 seconds, fetching the newest ~50 posts. For each post, attempt to parse the title as a goal post using a regex pattern. If the title matches and involves a monitored team, extract the media URL and emit a `GoalEvent` + `RedditPost` pair.
+**Approach:** Poll `https://www.reddit.com/r/soccer/new.json` via httpx every ~30 seconds, fetching the newest ~50 posts. No Reddit API authentication required — uses the public JSON endpoint (rate limit: ~10 req/min for unauthenticated, we use ~2 req/min). For each post, attempt to parse the title as a goal post using a regex pattern. If the title matches and involves a monitored team, extract the media URL and emit a `GoalEvent` + `RedditPost` pair.
 
 **Title convention (actual r/soccer format):**
 
@@ -257,7 +257,7 @@ every 30 seconds:
 |-------|--------|---------------|
 | **Language** | Python 3.12+ | Best ecosystem for this task: asyncpraw (Reddit), yt-dlp (media), httpx (HTTP). Quick to prototype and iterate. |
 | **Async runtime** | asyncio + httpx | Non-blocking I/O for concurrent downloads and API calls |
-| **Reddit client** | asyncpraw | Official async Reddit API wrapper, handles OAuth and rate limiting |
+| **Reddit client** | httpx | Direct HTTP to Reddit's public JSON endpoint — no OAuth, no API key needed |
 | **Media extraction** | yt-dlp | Fallback video downloader for non-streamff hosts, supports 1000+ sites |
 | **Media download** | httpx | Direct HTTP download for streamff.link videos |
 | **Telegram** | python-telegram-bot | Async Telegram Bot API client for sending videos to channels |
@@ -279,9 +279,7 @@ All configuration is driven by **environment variables** defined in `docker-comp
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REDDIT_CLIENT_ID` | Yes | — | Reddit OAuth app client ID |
-| `REDDIT_CLIENT_SECRET` | Yes | — | Reddit OAuth app client secret |
-| `REDDIT_USER_AGENT` | No | `SoccerGoals/1.0` | User-Agent string for Reddit API requests |
+| `REDDIT_USER_AGENT` | No | `SoccerGoals/1.0` | User-Agent string for Reddit requests |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token from BotFather |
 | `TELEGRAM_CHANNEL_ID` | Yes | — | Target Telegram channel ID (e.g. `-100XXXXXXXXXX`) |
 | `MONITORED_TEAMS` | Yes | — | Comma-separated team names (e.g. `Espanyol,Real Madrid,Barcelona`) |

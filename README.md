@@ -13,9 +13,9 @@ Runs as a single Docker container. SQLite tracks state to avoid duplicates and e
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- API keys for:
-  - [Reddit API](https://www.reddit.com/prefs/apps) (OAuth app)
-  - [Telegram Bot](https://t.me/BotFather) (bot token + channel)
+- A [Telegram Bot](https://t.me/BotFather) (bot token + channel)
+
+No Reddit API key needed — SoccerGoals uses Reddit's public JSON API.
 
 ## Quick Start
 
@@ -42,24 +42,15 @@ All config is via environment variables in `docker-compose.yml`. You can also us
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `REDDIT_CLIENT_ID` | Yes | — | Reddit OAuth app client ID |
-| `REDDIT_CLIENT_SECRET` | Yes | — | Reddit OAuth app secret |
-| `REDDIT_USER_AGENT` | No | `SoccerGoals/1.0` | User-Agent for Reddit API |
 | `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token from BotFather |
 | `TELEGRAM_CHANNEL_ID` | Yes | — | Telegram channel ID (e.g. `-100XXXXXXXXXX`) |
 | `MONITORED_TEAMS` | No | `Espanyol,Real Madrid,Barcelona,Atletico Madrid` | Comma-separated team names |
+| `REDDIT_USER_AGENT` | No | `SoccerGoals/1.0` | User-Agent for Reddit requests |
 | `POLLING_INTERVAL_SECONDS` | No | `30` | Seconds between scan cycles |
 | `MAX_POST_AGE_MINUTES` | No | `30` | Max age of Reddit posts to consider |
 | `MAX_RETRIES` | No | `3` | Retry attempts for failed operations |
 
 ## Getting API Keys
-
-### Reddit
-
-1. Go to [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps)
-2. Click "create another app..." at the bottom
-3. Select **script**, fill in a name and redirect URI (`http://localhost:8080`)
-4. Note the **client ID** (under the app name) and **client secret**
 
 ### Telegram
 
@@ -81,8 +72,6 @@ To run locally without Docker:
 uv sync
 
 # Set environment variables
-export REDDIT_CLIENT_ID="your-id"
-export REDDIT_CLIENT_SECRET="your-secret"
 export TELEGRAM_BOT_TOKEN="your-token"
 export TELEGRAM_CHANNEL_ID="your-channel-id"
 export MONITORED_TEAMS="Espanyol,Real Madrid"

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from soccergoals.scanner import (
@@ -136,41 +137,54 @@ class TestMakeEventId:
 
 # ── RedditGoalScanner integration ──────────────────────────────────
 
-def _make_submission(
+def _make_reddit_json(*posts):
+    """Build a fake Reddit /new.json response."""
+    children = []
+    for p in posts:
+        children.append({"kind": "t3", "data": p})
+    return {"data": {"children": children}}
+
+
+def _make_response(json_data: dict) -> httpx.Response:
+    """Build an httpx.Response that supports raise_for_status()."""
+    request = httpx.Request("GET", "https://www.reddit.com/r/soccer/new.json")
+    return httpx.Response(200, json=json_data, request=request)
+
+
+def _make_post_data(
     post_id: str,
     title: str,
     url: str,
     selftext: str = "",
     score: int = 50,
     age_seconds: float = 60.0,
-):
+) -> dict:
     now_ts = datetime.now(timezone.utc).timestamp()
-    sub = MagicMock()
-    sub.id = post_id
-    sub.title = title
-    sub.url = url
-    sub.selftext = selftext
-    sub.score = score
-    sub.created_utc = now_ts - age_seconds
-    return sub
+    return {
+        "id": post_id,
+        "title": title,
+        "url": url,
+        "selftext": selftext,
+        "score": score,
+        "created_utc": now_ts - age_seconds,
+    }
 
 
 class TestRedditGoalScanner:
     @pytest.fixture()
     def scanner(self, config):
-        with patch("soccergoals.scanner.asyncpraw.Reddit"):
-            s = RedditGoalScanner(config)
-            yield s
+        s = RedditGoalScanner(config)
+        yield s
 
     async def test_finds_goal_brackets(self, scanner):
-        sub = _make_submission(
+        post = _make_post_data(
             "p1",
             "Real Madrid [1] - 0 Barcelona - Vinícius Júnior 23'",
             "https://streamff.link/v/abc123",
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert len(results) == 1
@@ -178,91 +192,82 @@ class TestRedditGoalScanner:
         assert results[0].post.media_url == "https://streamff.link/v/abc123"
 
     async def test_finds_goal_no_brackets(self, scanner):
-        sub = _make_submission(
+        post = _make_post_data(
             "p2",
             "Real Madrid 1 - 0 Barcelona - Vinícius Júnior 23'",
             "https://streamff.link/v/def456",
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert len(results) == 1
 
     async def test_filters_non_monitored_teams(self, scanner):
-        sub = _make_submission(
+        post = _make_post_data(
             "p3",
             "Getafe [1] - 0 Rayo Vallecano - Borja Mayoral 10'",
             "https://streamff.link/v/xyz",
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid", "Barcelona"])
         assert len(results) == 0
 
     async def test_skips_old_posts(self, scanner):
-        old_sub = _make_submission(
+        post = _make_post_data(
             "p4",
             "Real Madrid [1] - 0 Sevilla - Bellingham 55'",
             "https://streamff.link/v/old",
             age_seconds=60 * 20,  # 20 min, config max is 15
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([old_sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert len(results) == 0
 
     async def test_no_results(self, scanner):
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json())
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert results == []
 
     async def test_non_goal_post_skipped(self, scanner):
-        sub = _make_submission(
+        post = _make_post_data(
             "p5",
             "Post Match Thread: Real Madrid vs Barcelona",
             "https://reddit.com/r/soccer/comments/xxx",
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert len(results) == 0
 
     async def test_reddit_exception_returns_empty(self, scanner):
-        scanner._reddit.subreddit = AsyncMock(side_effect=Exception("Reddit down"))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(side_effect=httpx.HTTPError("Reddit down"))
 
         results = await scanner.scan_new_posts(["Real Madrid"])
         assert results == []
 
     async def test_alias_match(self, scanner):
-        sub = _make_submission(
+        post = _make_post_data(
             "p6",
             "Spurs [2] - 1 Arsenal - Son Heung-min 72'",
             "https://streamff.link/v/spurs",
         )
-        mock_subreddit = AsyncMock()
-        mock_subreddit.new = _async_iter_from([sub])
-        scanner._reddit.subreddit = AsyncMock(return_value=mock_subreddit)
+        resp = _make_response(_make_reddit_json(post))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
 
         results = await scanner.scan_new_posts(["Tottenham"])
         assert len(results) == 1
-
-
-# ── Helpers ─────────────────────────────────────────────────────────
-
-def _async_iter_from(items):
-    """Return a callable that yields items as an async iterator (for subreddit.new)."""
-    async def _new(*args, **kwargs):
-        for item in items:
-            yield item
-    return _new

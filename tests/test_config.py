@@ -11,20 +11,18 @@ class TestConfigLoading:
         from soccergoals.config import Config
 
         cfg = Config()
-        assert cfg.reddit_client_id == "test-reddit-id"
-        assert cfg.reddit_client_secret == "test-reddit-secret"
         assert cfg.telegram_bot_token == "test-telegram-token"
         assert cfg.telegram_channel_id == "@test_channel"
 
     def test_missing_required_var_exits(self, fake_env):
-        env_without_key = {k: v for k, v in os.environ.items() if k != "REDDIT_CLIENT_ID"}
+        env_without_key = {k: v for k, v in os.environ.items() if k != "TELEGRAM_BOT_TOKEN"}
         with patch.dict(os.environ, env_without_key, clear=True):
             with pytest.raises(SystemExit):
                 from soccergoals.config import Config
                 Config()
 
-    def test_missing_telegram_token_exits(self, fake_env):
-        env_without = {k: v for k, v in os.environ.items() if k != "TELEGRAM_BOT_TOKEN"}
+    def test_missing_telegram_channel_exits(self, fake_env):
+        env_without = {k: v for k, v in os.environ.items() if k != "TELEGRAM_CHANNEL_ID"}
         with patch.dict(os.environ, env_without, clear=True):
             with pytest.raises(SystemExit):
                 from soccergoals.config import Config
@@ -38,8 +36,6 @@ class TestConfigLoading:
 
     def test_monitored_teams_strips_whitespace(self, tmp_path):
         env = {
-            "REDDIT_CLIENT_ID": "i",
-            "REDDIT_CLIENT_SECRET": "s",
             "TELEGRAM_BOT_TOKEN": "t",
             "TELEGRAM_CHANNEL_ID": "@c",
             "MONITORED_TEAMS": "  Liverpool ,  Arsenal  ",

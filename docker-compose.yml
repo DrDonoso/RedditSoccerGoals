@@ -4,9 +4,7 @@ services:
     restart: unless-stopped
 
     environment:
-      # --- Reddit API (reddit.com/prefs/apps) ---
-      REDDIT_CLIENT_ID: "${REDDIT_CLIENT_ID}"
-      REDDIT_CLIENT_SECRET: "${REDDIT_CLIENT_SECRET}"
+      # --- Reddit (no auth required — uses public JSON API) ---
       # User-Agent for Reddit requests
       REDDIT_USER_AGENT: "${REDDIT_USER_AGENT:-SoccerGoals/1.0}"
 

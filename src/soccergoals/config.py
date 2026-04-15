@@ -21,8 +21,6 @@ class Config:
 
     def __init__(self) -> None:
         # Required
-        self.reddit_client_id: str = _require("REDDIT_CLIENT_ID")
-        self.reddit_client_secret: str = _require("REDDIT_CLIENT_SECRET")
         self.telegram_bot_token: str = _require("TELEGRAM_BOT_TOKEN")
         self.telegram_channel_id: str = _require("TELEGRAM_CHANNEL_ID")
 

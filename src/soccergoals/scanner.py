@@ -6,12 +6,14 @@ import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 
-import asyncpraw
+import httpx
 
 from soccergoals.config import Config
 from soccergoals.models import GoalEvent, RedditPost, ScanResult
 
 logger = logging.getLogger(__name__)
+
+REDDIT_NEW_URL = "https://www.reddit.com/r/soccer/new.json"
 
 GOAL_TITLE_PATTERN = re.compile(
     r"^(?P<home_team>.+?)\s+"           # Home team name (non-greedy)
@@ -93,18 +95,19 @@ def _make_event_id(home_team: str, away_team: str, date: datetime) -> str:
 
 
 class RedditGoalScanner:
-    """Browses r/soccer/new, parses goal post titles, and returns matching ScanResults."""
+    """Browses r/soccer/new via public JSON API, parses goal post titles, and returns matching ScanResults."""
 
     def __init__(self, config: Config) -> None:
         self._max_age_minutes = config.max_post_age_minutes
-        self._reddit = asyncpraw.Reddit(
-            client_id=config.reddit_client_id,
-            client_secret=config.reddit_client_secret,
-            user_agent=config.reddit_user_agent,
+        self._user_agent = config.reddit_user_agent
+        self._client = httpx.AsyncClient(
+            headers={"User-Agent": self._user_agent},
+            follow_redirects=True,
+            timeout=30.0,
         )
 
     async def close(self) -> None:
-        await self._reddit.close()
+        await self._client.aclose()
 
     async def scan_new_posts(
         self, monitored_teams: list[str]
@@ -115,15 +118,27 @@ class RedditGoalScanner:
         cutoff_seconds = self._max_age_minutes * 60
 
         try:
-            subreddit = await self._reddit.subreddit("soccer")
-            async for submission in subreddit.new(limit=50):
-                created = datetime.fromtimestamp(
-                    submission.created_utc, tz=timezone.utc
-                )
+            resp = await self._client.get(
+                REDDIT_NEW_URL, params={"limit": "50", "raw_json": "1"}
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            children = data.get("data", {}).get("children", [])
+        except (httpx.HTTPError, ValueError) as exc:
+            logger.warning("Failed to fetch r/soccer/new: %s", exc)
+            return []
+
+        for child in children:
+            try:
+                post_data = child.get("data", {})
+                created_utc = post_data.get("created_utc", 0)
+                created = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+
                 if (now - created).total_seconds() > cutoff_seconds:
                     continue
 
-                match = GOAL_TITLE_PATTERN.match(submission.title)
+                title = post_data.get("title", "")
+                match = GOAL_TITLE_PATTERN.match(title)
                 if not match:
                     continue
 
@@ -136,15 +151,16 @@ class RedditGoalScanner:
                 ):
                     continue
 
-                selftext = getattr(submission, "selftext", "") or ""
-                media_url = _extract_media_url(submission.url, selftext)
+                selftext = post_data.get("selftext", "") or ""
+                post_url = post_data.get("url", "")
+                media_url = _extract_media_url(post_url, selftext)
 
                 post = RedditPost(
-                    post_id=submission.id,
-                    title=submission.title,
-                    url=submission.url,
+                    post_id=post_data.get("id", ""),
+                    title=title,
+                    url=post_url,
                     media_url=media_url,
-                    score=submission.score,
+                    score=post_data.get("score", 0),
                     created_utc=created,
                 )
 
@@ -160,10 +176,9 @@ class RedditGoalScanner:
                 )
 
                 results.append(ScanResult(event=event, post=post))
-
-        except Exception:
-            logger.exception("Failed to scan r/soccer/new")
-            return []
+            except Exception:
+                logger.exception("Error parsing post: %s", child.get("data", {}).get("id", "?"))
+                continue
 
         logger.info(
             "Scanned r/soccer/new: %d goal posts for monitored teams (%d with media)",

@@ -13,8 +13,6 @@ from soccergoals.models import DownloadResult, GoalEvent, RedditPost
 # ── Environment / Config ────────────────────────────────────────────
 
 FAKE_ENV = {
-    "REDDIT_CLIENT_ID": "test-reddit-id",
-    "REDDIT_CLIENT_SECRET": "test-reddit-secret",
     "TELEGRAM_BOT_TOKEN": "test-telegram-token",
     "TELEGRAM_CHANNEL_ID": "@test_channel",
     "MONITORED_TEAMS": "Real Madrid, Barcelona, Manchester City",
