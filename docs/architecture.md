@@ -5,25 +5,25 @@
 ## System Overview
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   SoccerGoals Worker                    │
-│                                                         │
-│  ┌──────────┐   ┌──────────────┐   ┌────────────────┐  │
-│  │  Match    │──▶│  Reddit      │──▶│  Media         │  │
-│  │  Poller   │   │  Searcher    │   │  Downloader    │  │
-│  └──────────┘   └──────────────┘   └────────────────┘  │
-│       │                │                    │           │
-│       ▼                ▼                    ▼           │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │              State Store (SQLite)               │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-         │                                    │
-         ▼                                    ▼
-   ┌───────────┐                     ┌──────────────┐
-   │ Football  │                     │  Local Disk / │
-   │ API       │                     │  Object Store │
-   └───────────┘                     └──────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                      SoccerGoals Worker                         │
+│                                                                  │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐  ┌─────────┐ │
+│  │  Match    │─▶│  Reddit      │─▶│  Media       │─▶│Telegram │ │
+│  │  Poller   │  │  Searcher    │  │  Downloader  │  │ Sender  │ │
+│  └──────────┘  └──────────────┘  └──────────────┘  └─────────┘ │
+│       │               │                │                │       │
+│       ▼               ▼                ▼                ▼       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │                 State Store (SQLite)                     │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────┘
+         │                                          │
+         ▼                                          ▼
+   ┌───────────┐                           ┌──────────────┐
+   │ Football  │                           │   Telegram   │
+   │ API       │                           │   Channel    │
+   └───────────┘                           └──────────────┘
 ```
 
 ## Components
@@ -32,7 +32,7 @@
 
 **Responsibility:** Detect when a goal is scored in a live match.
 
-**Approach:** Poll a football data API on a fixed interval (30–60 seconds) for live match events. Compare current score state against last-known state to detect new goals.
+**Approach:** Poll a football data API on a fixed interval (30–60 seconds) for live match events. Compare current score state against last-known state to detect new goals. Only goals involving **configured monitored teams** are processed — filtering is team-based, not league-based.
 
 **Data source options (ranked):**
 
@@ -43,6 +43,8 @@
 | [SportMonks](https://www.sportmonks.com/) | Limited | ~1 min delay | Richer data, paid quickly |
 
 **Recommendation:** Start with **API-Football** (free tier). It provides live fixture events including goal scorers, minute, and match context — everything we need for the title template.
+
+**Filtering:** The poller retrieves all live fixtures but only emits `GoalEvent`s for matches where **at least one** of the configured `monitored` teams is playing (home or away). This keeps API usage efficient while supporting any league/competition.
 
 **Interface:**
 
@@ -57,21 +59,37 @@ class GoalEvent:
     away_team: str
     home_score: int
     away_score: int
-    league: str
+    scoring_team: str        # which team scored (the one with [brackets] in the title)
+    aggregate: str | None    # e.g. "3-2 on agg." — optional
     timestamp: datetime
 
 class MatchPoller(Protocol):
-    async def poll_live_matches(self) -> list[GoalEvent]: ...
+    async def poll_live_matches(
+        self, monitored_teams: list[str]
+    ) -> list[GoalEvent]: ...
 ```
 
 ### 2. Reddit Searcher
 
-**Responsibility:** Given a `GoalEvent`, build a search query from a title template and find matching Reddit posts (primarily from r/soccer).
+**Responsibility:** Given a `GoalEvent`, build a search query from the r/soccer title convention and find matching Reddit posts. Extract the **streamff.link** video URL from the post.
+
+**Source:** Always **r/soccer** — hardcoded, not configurable.
+
+**Title convention (actual r/soccer format):**
+```
+{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'
+```
+Example: `Atletico Madrid [1] - 2 Barcelona [3-2 on agg.] - Ademola Lookman 31'`
+
+- The `[X]` next to a team name indicates **who scored** (the team with brackets around the new score)
+- Aggregate info like `[3-2 on agg.]` is optional
+- The `'` after the minute is standard
 
 **Approach:**
-- Use a configurable **title template** to construct the Reddit search query. Example template: `{scorer} {home_score}-{away_score} {home_team} vs {away_team}`
-- Search r/soccer (and optionally other subreddits) using Reddit's API
+- Build a search query from the GoalEvent fields matching this title format
+- Search r/soccer using Reddit's API
 - Rank results by recency and relevance
+- Extract the **streamff.link** video URL from the post body/URL (this is the primary media host for r/soccer goal clips)
 - Filter for posts containing video/media links
 
 **Rate limiting:** Reddit API allows 100 requests per minute per OAuth client. We'll stay well under this with natural polling cadence.
@@ -83,15 +101,14 @@ class MatchPoller(Protocol):
 class RedditPost:
     post_id: str
     title: str
-    url: str            # direct link or reddit post URL
-    media_url: str | None  # extracted streamable/video URL
+    url: str               # direct link or reddit post URL
+    media_url: str | None  # extracted streamff.link URL (primary) or other video host
     score: int
     created_utc: datetime
-    subreddit: str
 
 class RedditSearcher(Protocol):
     async def search_goal_clip(
-        self, event: GoalEvent, template: str
+        self, event: GoalEvent
     ) -> list[RedditPost]: ...
 ```
 
@@ -100,9 +117,9 @@ class RedditSearcher(Protocol):
 **Responsibility:** Download the video from the best matching Reddit post.
 
 **Approach:**
-- Reddit goal clips typically link to: Streamable, Streamin, Streamja, v.redd.it, or similar hosts
-- Use **yt-dlp** as the extraction engine — it supports all major video hosts and handles format selection
-- Download to a local directory with structured naming: `{date}/{league}/{home_team}_vs_{away_team}_{scorer}_{minute}.mp4`
+- **Primary target: streamff.link** — the dominant video host for r/soccer goal clips. The downloader should first attempt to extract and download from the streamff.link URL found in the Reddit post.
+- **Fallback: yt-dlp** — for any other video hosts (Streamable, v.redd.it, Streamin, etc.), use yt-dlp as the extraction engine.
+- Download to a temporary file for subsequent delivery to Telegram.
 
 **Interface:**
 
@@ -117,11 +134,38 @@ class DownloadResult:
 
 class MediaDownloader(Protocol):
     async def download(
-        self, post: RedditPost, event: GoalEvent, output_dir: Path
+        self, post: RedditPost, event: GoalEvent
     ) -> DownloadResult: ...
 ```
 
-### 4. State Store
+### 4. Telegram Sender
+
+**Responsibility:** Send the downloaded goal clip video to a configured Telegram channel, along with context (scorer, teams, score, minute).
+
+**Approach:**
+- Use **python-telegram-bot** library to interact with the Telegram Bot API
+- Send the video file with a caption containing match details
+- Caption format: `⚽ {scorer} {minute}' — {home_team} {home_score}-{away_score} {away_team}`
+- Requires a bot token and target channel ID (configured in config.toml)
+
+**Interface:**
+
+```python
+@dataclass
+class SendResult:
+    event: GoalEvent
+    message_id: int
+    channel_id: str
+    success: bool
+    error: str | None = None
+
+class TelegramSender(Protocol):
+    async def send_goal_clip(
+        self, download: DownloadResult
+    ) -> SendResult: ...
+```
+
+### 5. State Store
 
 **Responsibility:** Track which goals have been processed to avoid duplicates and enable retry.
 
@@ -136,9 +180,10 @@ CREATE TABLE processed_goals (
     scorer        TEXT NOT NULL,
     minute        INTEGER NOT NULL,
     event_hash    TEXT UNIQUE NOT NULL,  -- dedup key
-    status        TEXT NOT NULL,          -- pending | downloaded | failed | no_clip
+    status        TEXT NOT NULL,          -- pending | downloaded | sent | failed | send_failed | no_clip
     reddit_post_id TEXT,
     file_path     TEXT,
+    telegram_msg_id INTEGER,
     error_message TEXT,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -151,19 +196,21 @@ CREATE TABLE poll_state (
 );
 ```
 
-### 5. Orchestrator (Main Loop)
+### 6. Orchestrator (Main Loop)
 
 **Responsibility:** Wire the components together and run the polling loop.
 
 ```
 every 45 seconds:
-  1. Poll live matches → detect new GoalEvents
+  1. Poll live matches (filtered to monitored teams) → detect new GoalEvents
   2. For each new goal (not in state store):
-     a. Search Reddit for matching clip
-     b. If found → download media
-     c. Record result in state store
+     a. Search r/soccer for matching clip
+     b. If found → download media (streamff.link first, yt-dlp fallback)
+     c. Send video to Telegram channel with match context
+     d. Record result in state store
   3. Retry any previously failed goals (up to 3 attempts, with backoff)
-  4. Sleep until next interval
+  4. Clean up temporary downloaded files
+  5. Sleep until next interval
 ```
 
 ## Tech Stack
@@ -173,7 +220,9 @@ every 45 seconds:
 | **Language** | Python 3.12+ | Best ecosystem for this task: PRAW/asyncpraw (Reddit), yt-dlp (media), httpx (HTTP), rich CLI libraries. Quick to prototype and iterate. |
 | **Async runtime** | asyncio + httpx | Non-blocking I/O for parallel API calls and downloads |
 | **Reddit client** | asyncpraw | Official async Reddit API wrapper, handles OAuth and rate limiting |
-| **Media extraction** | yt-dlp | Industry-standard video downloader, supports 1000+ sites |
+| **Media extraction** | yt-dlp | Fallback video downloader for non-streamff hosts, supports 1000+ sites |
+| **Media extraction (primary)** | httpx (direct download) | Primary downloader for streamff.link videos |
+| **Telegram** | python-telegram-bot | Async Telegram Bot API client for sending videos to channels |
 | **Database** | SQLite (via aiosqlite) | Zero-config state persistence, perfect for single-process workers |
 | **Config** | TOML (pyproject.toml + config.toml) | Python-native config format, clean and readable |
 | **Scheduling** | Built-in asyncio loop | No need for Celery/APScheduler for a single polling loop |
@@ -192,7 +241,9 @@ every 45 seconds:
 # config.toml
 [polling]
 interval_seconds = 45
-leagues = ["Premier League", "La Liga", "Champions League"]  # filter
+
+[teams]
+monitored = ["Espanyol", "Real Madrid", "Barcelona", "Atletico Madrid"]
 
 [football_api]
 provider = "api-football"   # extensible to other providers
@@ -200,13 +251,16 @@ base_url = "https://v3.football.api-sports.io"
 # API key stored in environment variable: FOOTBALL_API_KEY
 
 [reddit]
-subreddits = ["soccer"]
-title_template = "{scorer} {home_score}-{away_score} {home_team} vs {away_team}"
+subreddit = "soccer"  # hardcoded to r/soccer
 max_results = 5
 max_post_age_minutes = 30   # ignore old posts
 
+[telegram]
+# Bot token stored in environment variable: TELEGRAM_BOT_TOKEN
+channel_id = "-100XXXXXXXXXX"  # target Telegram channel
+
 [media]
-output_dir = "./downloads"
+temp_dir = "./tmp"          # temporary downloads, cleaned after sending
 max_file_size_mb = 100
 preferred_format = "mp4"
 max_retries = 3
@@ -222,10 +276,13 @@ path = "./data/soccergoals.db"
 | Football API down | Log warning, skip poll cycle, retry next interval |
 | Reddit API rate limited | Respect `Retry-After` header, exponential backoff |
 | Reddit search returns no results | Mark goal as `no_clip`, retry up to 3 times with increasing delay (clips may be posted late) |
+| streamff.link download fails | Fall back to yt-dlp. If both fail, mark as `failed`, retry with backoff. |
 | yt-dlp download fails | Mark as `failed`, retry with backoff. Some hosts die quickly — accept this. |
+| Telegram send fails | Retry up to 3 times with backoff. If persistent, mark as `send_failed` in state store (video downloaded but not delivered). |
+| Telegram rate limited | Respect Telegram rate limits (~30 msgs/sec for bots). Queue and retry. |
 | Duplicate goal detection | Hash `match_id + scorer + minute` for dedup |
 | Process crash | SQLite state survives restart. On startup, retry `pending`/`failed` goals. |
-| API key missing/invalid | Fail fast on startup with clear error message |
+| API key missing/invalid | Fail fast on startup with clear error message (includes Telegram bot token) |
 
 ## Directory Structure (Proposed)
 
@@ -236,15 +293,17 @@ SoccerGoals/
 │       ├── __init__.py
 │       ├── main.py              # Entry point, orchestrator loop
 │       ├── config.py            # Config loading and validation
-│       ├── models.py            # GoalEvent, RedditPost, DownloadResult
-│       ├── poller.py            # MatchPoller (football API integration)
-│       ├── searcher.py          # RedditSearcher
-│       ├── downloader.py        # MediaDownloader (yt-dlp wrapper)
+│       ├── models.py            # GoalEvent, RedditPost, DownloadResult, SendResult
+│       ├── poller.py            # MatchPoller (football API, team-based filtering)
+│       ├── searcher.py          # RedditSearcher (r/soccer, streamff.link extraction)
+│       ├── downloader.py        # MediaDownloader (streamff.link primary, yt-dlp fallback)
+│       ├── sender.py            # TelegramSender (python-telegram-bot)
 │       └── store.py             # SQLite state store
 ├── tests/
 │   ├── test_poller.py
 │   ├── test_searcher.py
 │   ├── test_downloader.py
+│   ├── test_sender.py
 │   └── test_store.py
 ├── config.toml                  # User configuration
 ├── pyproject.toml               # Project metadata + dependencies
@@ -255,16 +314,8 @@ SoccerGoals/
 
 ## Open Questions for @drdonoso
 
-1. **Leagues scope:** Which leagues should we monitor? All live matches, or a configurable subset? The free API tier (100 req/day) limits how many concurrent fixtures we can track.
+1. **Hosting preference:** Running locally on your machine? A Raspberry Pi? A cloud VPS? Docker container? This affects how we handle process supervision (systemd, Docker restart policies, etc.).
 
-2. **Media storage:** Local disk is simplest. Do you need cloud storage (S3, etc.) or serving via a web endpoint? This affects complexity significantly.
+2. **Retention policy:** Downloaded videos are temporary (deleted after Telegram send). Should we keep any local archive, or is Telegram the sole record?
 
-3. **Notifications:** Should the system notify you when a goal clip is captured? (e.g., Discord webhook, desktop notification, Telegram bot). Easy to add but worth scoping now.
-
-4. **Title template flexibility:** The r/soccer convention is fairly stable (`Player [Score] Team vs Team`), but do you want to support multiple subreddits with different naming conventions?
-
-5. **Hosting preference:** Running locally on your machine? A Raspberry Pi? A cloud VPS? Docker container? This affects how we handle process supervision (systemd, Docker restart policies, etc.).
-
-6. **Retention policy:** Keep all videos forever, or auto-prune after N days? Disk space consideration.
-
-7. **Python version/tooling preference:** Any strong feelings on uv vs pip vs poetry? Python 3.12+ ok?
+3. **Python version/tooling preference:** Any strong feelings on uv vs pip vs poetry? Python 3.12+ ok?

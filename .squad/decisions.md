@@ -9,6 +9,20 @@
 
 Proposed the foundational architecture for SoccerGoals — Python 3.12+ async process polling API-Football for live goals, searching Reddit (r/soccer) via asyncpraw, and downloading media via yt-dlp. SQLite for state management. Key choices: single async process, TOML config, clear component separation (Match Poller, Reddit Searcher, Media Downloader, State Store, Orchestrator). Open items: league scope, storage strategy, notifications, hosting, retention policy. See `docs/architecture.md`.
 
+### Scope Decisions — Confirmed by drdonoso
+- **Author:** Leela (Lead)
+- **Date:** 2026-04-15
+- **Status:** Confirmed
+
+Five scope decisions confirmed:
+1. **Reddit Source:** r/soccer only — hardcoded, no multi-subreddit support.
+2. **Title Format:** `{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'` — `[X]` brackets mark scoring team.
+3. **Media Source:** streamff.link primary, yt-dlp fallback.
+4. **Output Destination:** Telegram channel via python-telegram-bot. Config: `TELEGRAM_BOT_TOKEN` env var + `channel_id` in config.toml.
+5. **Match Filtering:** Team-based (`[teams] monitored` list) replaces league-based filtering.
+
+Impact: Telegram Sender added, GoalEvent model updated, RedditSearcher simplified, config restructured. Open questions reduced to 3 (hosting, retention, tooling).
+
 ## Governance
 
 - All meaningful changes require team consensus

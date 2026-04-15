@@ -20,3 +20,14 @@
 - Decision filed: `.squad/decisions/inbox/leela-architecture.md`
 - Open questions flagged: league scope, storage strategy, notifications, hosting, retention, tooling prefs
 - drdonoso needs to confirm stack and answer open questions before Fry starts building
+
+### 2026-04-15 — Scope Decisions Confirmed
+- Reddit source locked to r/soccer only (hardcoded, not configurable)
+- Title format confirmed as actual r/soccer convention: `{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'`
+- Media source: streamff.link is primary target, yt-dlp is fallback
+- Output destination: Telegram channel (not local storage) — new TelegramSender component added
+- Match filtering: team-based (monitored teams list), NOT league-based
+- GoalEvent model updated: added `scoring_team`, `aggregate`; removed `league`
+- Architecture doc fully updated, 4 of 7 open questions resolved (leagues, storage, notifications, title format)
+- Remaining open: hosting, retention, tooling prefs
+- Decision filed: `.squad/decisions/inbox/leela-scope-decisions.md`
