@@ -13,6 +13,8 @@ How to decide who handles what.
 | Code review | Leela | Review PRs, check quality, suggest improvements |
 | Testing | Hermes | Write tests, find edge cases, mock external APIs |
 | Scope & priorities | Leela | What to build next, trade-offs, decisions |
+| Docker & builds | Bender | Dockerfile, docker-compose, image builds, CI/CD |
+| DevOps & deploy | Bender | Container config, pipelines, infrastructure |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing
@@ -23,6 +25,7 @@ How to decide who handles what.
 | `squad:leela` | Architecture/design issues | Leela |
 | `squad:fry` | Implementation, API integration, background process | Fry |
 | `squad:hermes` | Testing, quality, edge cases | Hermes |
+| `squad:bender` | Docker, CI/CD, builds, deployment | Bender |
 
 ### How Issue Assignment Works
 

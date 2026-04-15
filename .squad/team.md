@@ -15,6 +15,7 @@
 | Leela | Lead | .squad/agents/leela/charter.md | 🏗️ Lead |
 | Fry | Backend Dev | .squad/agents/fry/charter.md | 🔧 Backend |
 | Hermes | Tester | .squad/agents/hermes/charter.md | 🧪 Tester |
+| Bender | DevOps | .squad/agents/bender/charter.md | ⚙️ DevOps |
 | Scribe | Scribe | .squad/agents/scribe/charter.md | 📋 Scribe |
 | Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Monitor |
 

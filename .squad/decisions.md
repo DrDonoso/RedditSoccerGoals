@@ -68,6 +68,13 @@ Football API eliminated. Reddit is the sole external data source. The Reddit Goa
 
 Full code rewrite implementing Option A. Deleted `poller.py` and `searcher.py`, created `scanner.py` (RedditGoalScanner). Team alias map hardcoded in scanner.py (common abbreviations: Barça, Atleti, Spurs, etc.). Event hash uses surname-only normalization — two same-surname scorers at the same minute would dedup (extremely unlikely). Retry re-scans r/soccer/new and matches by scorer+minute (may miss aged-out posts). `__main__.py` guard added. 78 tests passing, no new dependencies.
 
+### Dockerfile Two-Stage Install Pattern
+- **Author:** Bender (DevOps)
+- **Date:** 2026-04-15
+- **Status:** Implemented
+
+Two-stage pip install in Dockerfile: first stage copies `pyproject.toml` with a stub package to cache dependencies, second stage copies real `src/` and reinstalls with `--no-deps`. Fixes build failure where setuptools couldn't discover packages without `src/`. Faster iterative builds for source-only changes. No runtime behavior changes.
+
 ## Governance
 
 - All meaningful changes require team consensus

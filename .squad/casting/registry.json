@@ -20,6 +20,13 @@
       "created_at": "2026-04-15T00:00:00Z",
       "legacy_named": false,
       "status": "active"
+    },
+    "devops": {
+      "persistent_name": "Bender",
+      "universe": "Futurama",
+      "created_at": "2026-04-15T00:00:00Z",
+      "legacy_named": false,
+      "status": "active"
     }
   }
 }
