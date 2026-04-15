@@ -42,7 +42,7 @@ class MediaDownloader:
             logger.warning("No media URL for post %s", post.post_id)
             return None
 
-        safe_name = re.sub(r"[^\w\-]", "_", f"{event.match_id}_{event.scorer}_{event.minute}")
+        safe_name = re.sub(r"[^\w\-]", "_", f"{event.event_id}_{event.scorer}_{event.minute}")
         dest = self._temp_dir / f"{safe_name}.mp4"
 
         # Primary: direct download for streamff.link

@@ -13,7 +13,6 @@ from soccergoals.models import DownloadResult, GoalEvent, RedditPost
 # ── Environment / Config ────────────────────────────────────────────
 
 FAKE_ENV = {
-    "FOOTBALL_API_KEY": "test-football-key",
     "REDDIT_CLIENT_ID": "test-reddit-id",
     "REDDIT_CLIENT_SECRET": "test-reddit-secret",
     "TELEGRAM_BOT_TOKEN": "test-telegram-token",
@@ -50,16 +49,13 @@ def config(fake_env):
 @pytest.fixture()
 def sample_goal_event() -> GoalEvent:
     return GoalEvent(
-        match_id="12345",
+        event_id="real_madrid_vs_barcelona_2026-04-15",
         scorer="Vinícius Júnior",
-        assist="Jude Bellingham",
         minute=23,
         home_team="Real Madrid",
         away_team="Barcelona",
         home_score=1,
         away_score=0,
-        scoring_team="Real Madrid",
-        aggregate=None,
         timestamp=datetime(2026, 4, 15, 20, 30, 0, tzinfo=timezone.utc),
     )
 

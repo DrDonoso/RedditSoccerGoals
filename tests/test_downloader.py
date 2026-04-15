@@ -104,7 +104,7 @@ class TestYtdlpFallback:
     async def test_ytdlp_success(self, downloader, event, post_other, tmp_path):
         """yt-dlp returns 0 and a file is found."""
         # Create a fake output file where yt-dlp would put it
-        safe_name = f"{event.match_id}_{event.scorer}_{event.minute}".replace(" ", "_")
+        safe_name = f"{event.event_id}_{event.scorer}_{event.minute}".replace(" ", "_")
         # The downloader will construct the path from _temp_dir
         # We mock the subprocess instead
 

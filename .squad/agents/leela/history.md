@@ -21,6 +21,17 @@
 - Open questions flagged: league scope, storage strategy, notifications, hosting, retention, tooling prefs
 - drdonoso needs to confirm stack and answer open questions before Fry starts building
 
+### 2026-04-15 — Reddit-First Architecture Pivot (Option A)
+- drdonoso approved: football API eliminated entirely, Reddit is sole data source
+- Match Poller killed, Reddit Searcher replaced by Reddit Goal Scanner
+- Scanner browses r/soccer/new every ~30s, parses titles with regex, filters monitored teams, extracts streamff.link URLs
+- GoalEvent model simplified: removed match_id, scoring_team, aggregate, assist; added derived event_id
+- Two-layer dedup: post_id (fast skip) + event_hash (semantic dedup via normalized team+scorer+minute hash)
+- Pipeline: Reddit Goal Scanner → Media Downloader → Telegram Sender (3 components, was 4)
+- Removed FOOTBALL_API_KEY from docker-compose.yml and config table
+- Full rewrite of `docs/architecture.md`
+- Decision filed: `.squad/decisions/inbox/leela-reddit-first.md`
+
 ### 2026-04-15 — Scope Decisions Confirmed
 - Reddit source locked to r/soccer only (hardcoded, not configurable)
 - Title format confirmed as actual r/soccer convention: `{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'`

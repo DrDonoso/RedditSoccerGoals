@@ -7,16 +7,13 @@ from pathlib import Path
 
 @dataclass
 class GoalEvent:
-    match_id: str
+    event_id: str
     scorer: str
-    assist: str | None
     minute: int
     home_team: str
     away_team: str
     home_score: int
     away_score: int
-    scoring_team: str
-    aggregate: str | None
     timestamp: datetime
 
 
@@ -37,6 +34,12 @@ class DownloadResult:
     source_url: str
     file_size_bytes: int
     duration_seconds: float | None
+
+
+@dataclass
+class ScanResult:
+    event: GoalEvent
+    post: RedditPost
 
 
 @dataclass

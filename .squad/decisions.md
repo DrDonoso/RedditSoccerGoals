@@ -53,6 +53,21 @@ Seven implementation decisions made during full system build: setuptools over po
 
 Changed `aiosqlite>=0.20` to `aiosqlite<=0.17` in pyproject.toml to resolve conflict with asyncpraw's `aiosqlite<=0.17.0` requirement. No code changes needed — aiosqlite 0.17 API covers all usage in `store.py`. All 77 tests pass.
 
+### Reddit-First Architecture Pivot (Option A)
+- **Author:** Leela (Lead)
+- **Date:** 2026-04-15
+- **Decided by:** drdonoso
+- **Status:** Confirmed
+
+Football API eliminated. Reddit is the sole external data source. The Reddit Goal Scanner replaces both the Match Poller and Reddit Searcher — browses r/soccer/new every ~30s, parses titles via regex, filters monitored teams, extracts streamff.link URLs. GoalEvent model simplified (removed match_id, scoring_team, aggregate, assist). Two-layer dedup: post_id + event_hash (normalized). Pipeline reduced to 3 components. FOOTBALL_API_KEY removed. Full rewrite of `docs/architecture.md`.
+
+### Reddit-First Rewrite Implementation
+- **Author:** Fry (Backend Dev)
+- **Date:** 2026-04-15
+- **Status:** Applied
+
+Full code rewrite implementing Option A. Deleted `poller.py` and `searcher.py`, created `scanner.py` (RedditGoalScanner). Team alias map hardcoded in scanner.py (common abbreviations: Barça, Atleti, Spurs, etc.). Event hash uses surname-only normalization — two same-surname scorers at the same minute would dedup (extremely unlikely). Retry re-scans r/soccer/new and matches by scorer+minute (may miss aged-out posts). `__main__.py` guard added. 78 tests passing, no new dependencies.
+
 ## Governance
 
 - All meaningful changes require team consensus

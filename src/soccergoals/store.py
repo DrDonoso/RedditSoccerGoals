@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,10 +15,10 @@ logger = logging.getLogger(__name__)
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS processed_goals (
     id              INTEGER PRIMARY KEY,
-    match_id        TEXT NOT NULL,
+    event_id        TEXT NOT NULL,
+    event_hash      TEXT UNIQUE NOT NULL,
     scorer          TEXT NOT NULL,
     minute          INTEGER NOT NULL,
-    event_hash      TEXT UNIQUE NOT NULL,
     status          TEXT NOT NULL,
     reddit_post_id  TEXT,
     file_path       TEXT,
@@ -28,18 +29,39 @@ CREATE TABLE IF NOT EXISTS processed_goals (
     updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS poll_state (
-    id              INTEGER PRIMARY KEY,
-    last_poll_at    TIMESTAMP,
-    fixtures_hash   TEXT
+CREATE TABLE IF NOT EXISTS seen_posts (
+    post_id     TEXT PRIMARY KEY,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 
 
-def _event_hash(match_id: str, scorer: str, minute: int) -> str:
+def _strip_accents(text: str) -> str:
+    """Remove diacritics/accents from text."""
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip accents."""
+    return _strip_accents(text.strip()).lower()
+
+
+def _extract_surname(name: str) -> str:
+    """Extract the last name from a full name."""
+    parts = name.strip().split()
+    return parts[-1] if parts else name
+
+
+def _event_hash(home_team: str, away_team: str, scorer: str, minute: int) -> str:
     """Compute a dedup hash for a goal event."""
-    raw = f"{match_id}:{scorer}:{minute}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+    raw = "|".join([
+        _normalize(home_team),
+        _normalize(away_team),
+        _normalize(_extract_surname(scorer)),
+        str(minute),
+    ])
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 class StateStore:
@@ -62,9 +84,25 @@ class StateStore:
         if self._db:
             await self._db.close()
 
-    async def is_processed(self, match_id: str, scorer: str, minute: int) -> bool:
+    async def is_post_seen(self, post_id: str) -> bool:
+        """Check if a Reddit post has already been seen (layer 1 dedup)."""
+        assert self._db is not None
+        async with self._db.execute(
+            "SELECT 1 FROM seen_posts WHERE post_id = ?", (post_id,)
+        ) as cursor:
+            return await cursor.fetchone() is not None
+
+    async def mark_post_seen(self, post_id: str) -> None:
+        """Record a Reddit post as seen."""
+        assert self._db is not None
+        await self._db.execute(
+            "INSERT OR IGNORE INTO seen_posts (post_id) VALUES (?)", (post_id,)
+        )
+        await self._db.commit()
+
+    async def is_processed(self, home_team: str, away_team: str, scorer: str, minute: int) -> bool:
         """Check if a goal has already been processed (any status)."""
-        h = _event_hash(match_id, scorer, minute)
+        h = _event_hash(home_team, away_team, scorer, minute)
         assert self._db is not None
         async with self._db.execute(
             "SELECT 1 FROM processed_goals WHERE event_hash = ?", (h,)
@@ -73,7 +111,9 @@ class StateStore:
 
     async def record_goal(
         self,
-        match_id: str,
+        event_id: str,
+        home_team: str,
+        away_team: str,
         scorer: str,
         minute: int,
         status: str,
@@ -83,13 +123,13 @@ class StateStore:
         error_message: str | None = None,
     ) -> None:
         """Insert or update a goal record."""
-        h = _event_hash(match_id, scorer, minute)
+        h = _event_hash(home_team, away_team, scorer, minute)
         assert self._db is not None
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
             """
             INSERT INTO processed_goals
-                (match_id, scorer, minute, event_hash, status,
+                (event_id, event_hash, scorer, minute, status,
                  reddit_post_id, file_path, telegram_msg_id, error_message,
                  created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -101,7 +141,7 @@ class StateStore:
                 error_message = excluded.error_message,
                 updated_at = excluded.updated_at
             """,
-            (match_id, scorer, minute, h, status,
+            (event_id, h, scorer, minute, status,
              reddit_post_id, file_path, telegram_msg_id, error_message,
              now, now),
         )
@@ -109,14 +149,15 @@ class StateStore:
 
     async def update_status(
         self,
-        match_id: str,
+        home_team: str,
+        away_team: str,
         scorer: str,
         minute: int,
         status: str,
         error_message: str | None = None,
     ) -> None:
         """Update the status of an existing goal record."""
-        h = _event_hash(match_id, scorer, minute)
+        h = _event_hash(home_team, away_team, scorer, minute)
         assert self._db is not None
         now = datetime.now(timezone.utc).isoformat()
         await self._db.execute(
@@ -134,7 +175,8 @@ class StateStore:
         assert self._db is not None
         async with self._db.execute(
             """
-            SELECT match_id, scorer, minute, status, retry_count, error_message, updated_at
+            SELECT event_id, scorer, minute, status, retry_count,
+                   error_message, updated_at, reddit_post_id
             FROM processed_goals
             WHERE status IN ('failed', 'send_failed', 'no_clip')
               AND retry_count < ?
@@ -144,19 +186,3 @@ class StateStore:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
-
-    async def save_poll_state(self, fixtures_hash: str) -> None:
-        """Save the latest poll state."""
-        assert self._db is not None
-        now = datetime.now(timezone.utc).isoformat()
-        await self._db.execute(
-            """
-            INSERT INTO poll_state (id, last_poll_at, fixtures_hash)
-            VALUES (1, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                last_poll_at = excluded.last_poll_at,
-                fixtures_hash = excluded.fixtures_hash
-            """,
-            (now, fixtures_hash),
-        )
-        await self._db.commit()

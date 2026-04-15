@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import signal
 import sys
@@ -10,9 +9,8 @@ from pathlib import Path
 
 from soccergoals.config import Config
 from soccergoals.downloader import MediaDownloader
-from soccergoals.models import GoalEvent
-from soccergoals.poller import MatchPoller
-from soccergoals.searcher import RedditSearcher
+from soccergoals.models import GoalEvent, RedditPost
+from soccergoals.scanner import RedditGoalScanner
 from soccergoals.sender import TelegramSender
 from soccergoals.store import StateStore
 
@@ -38,12 +36,11 @@ def _setup_logging() -> None:
 
 
 class Orchestrator:
-    """Main application loop: poll → search → download → send → record."""
+    """Main application loop: scan → download → send → record."""
 
     def __init__(self, config: Config) -> None:
         self._config = config
-        self._poller = MatchPoller(config)
-        self._searcher = RedditSearcher(config)
+        self._scanner = RedditGoalScanner(config)
         self._downloader = MediaDownloader(config)
         self._sender = TelegramSender(config)
         self._store = StateStore(config)
@@ -53,7 +50,7 @@ class Orchestrator:
         """Initialize components and run the main loop."""
         await self._store.init()
         logger.info(
-            "SoccerGoals started — monitoring %s, polling every %ds",
+            "SoccerGoals started — monitoring %s, scanning every %ds",
             ", ".join(self._config.monitored_teams),
             self._config.polling_interval,
         )
@@ -73,69 +70,69 @@ class Orchestrator:
     async def _shutdown(self) -> None:
         """Clean up all resources."""
         logger.info("Shutting down components...")
-        await self._poller.close()
-        await self._searcher.close()
+        await self._scanner.close()
         await self._downloader.close()
         await self._store.close()
         self._cleanup_temp_files()
         logger.info("Shutdown complete")
 
     async def _tick(self) -> None:
-        """Execute one poll cycle."""
-        # 1. Poll live matches for new goals
-        new_goals = await self._poller.poll_live_matches(
+        """Execute one scan cycle."""
+        scan_results = await self._scanner.scan_new_posts(
             self._config.monitored_teams
         )
 
-        # Save poll state with a hash of fixture IDs
-        if new_goals:
-            ids = sorted(g.match_id for g in new_goals)
-            fixtures_hash = hashlib.md5(
-                ",".join(ids).encode()
-            ).hexdigest()
-            await self._store.save_poll_state(fixtures_hash)
+        for result in scan_results:
+            event = result.event
+            post = result.post
 
-        # 2. Process each new goal
-        for goal in new_goals:
-            if await self._store.is_processed(
-                goal.match_id, goal.scorer, goal.minute
-            ):
-                logger.debug("Skipping already-processed goal: %s %d'", goal.scorer, goal.minute)
+            # Layer 1 dedup: Reddit post ID
+            if await self._store.is_post_seen(post.post_id):
                 continue
-            await self._process_goal(goal)
+            await self._store.mark_post_seen(post.post_id)
 
-        # 3. Retry previously failed goals
+            # Layer 2 dedup: event hash
+            if await self._store.is_processed(
+                event.home_team, event.away_team, event.scorer, event.minute
+            ):
+                logger.debug(
+                    "Skipping already-processed goal: %s %d'",
+                    event.scorer, event.minute,
+                )
+                continue
+
+            await self._process_goal(event, post)
+
+        # Retry previously failed goals
         await self._retry_failed()
 
-    async def _process_goal(self, goal: GoalEvent) -> None:
-        """Full pipeline for a single goal: search → download → send."""
+    async def _process_goal(self, event: GoalEvent, post: RedditPost) -> None:
+        """Full pipeline for a single goal: download → send → record."""
         logger.info(
             "Processing goal: %s %d' — %s %d-%d %s",
-            goal.scorer, goal.minute,
-            goal.home_team, goal.home_score, goal.away_score, goal.away_team,
+            event.scorer, event.minute,
+            event.home_team, event.home_score, event.away_score, event.away_team,
         )
 
-        # Search Reddit
-        posts = await self._searcher.search_goal_clip(goal)
-        post_with_media = next((p for p in posts if p.media_url), None)
-
-        if not post_with_media:
-            logger.warning("No clip found for %s %d'", goal.scorer, goal.minute)
+        if not post.media_url:
+            logger.warning("No clip found for %s %d'", event.scorer, event.minute)
             await self._store.record_goal(
-                goal.match_id, goal.scorer, goal.minute,
+                event.event_id, event.home_team, event.away_team,
+                event.scorer, event.minute,
                 status="no_clip",
-                reddit_post_id=posts[0].post_id if posts else None,
+                reddit_post_id=post.post_id,
             )
             return
 
         # Download
-        download = await self._downloader.download(post_with_media, goal)
+        download = await self._downloader.download(post, event)
         if not download:
-            logger.warning("Download failed for %s %d'", goal.scorer, goal.minute)
+            logger.warning("Download failed for %s %d'", event.scorer, event.minute)
             await self._store.record_goal(
-                goal.match_id, goal.scorer, goal.minute,
+                event.event_id, event.home_team, event.away_team,
+                event.scorer, event.minute,
                 status="failed",
-                reddit_post_id=post_with_media.post_id,
+                reddit_post_id=post.post_id,
                 error_message="Download failed",
             )
             return
@@ -144,17 +141,19 @@ class Orchestrator:
         result = await self._sender.send_goal_clip(download)
         if result.success:
             await self._store.record_goal(
-                goal.match_id, goal.scorer, goal.minute,
+                event.event_id, event.home_team, event.away_team,
+                event.scorer, event.minute,
                 status="sent",
-                reddit_post_id=post_with_media.post_id,
+                reddit_post_id=post.post_id,
                 file_path=str(download.file_path),
                 telegram_msg_id=result.message_id,
             )
         else:
             await self._store.record_goal(
-                goal.match_id, goal.scorer, goal.minute,
+                event.event_id, event.home_team, event.away_team,
+                event.scorer, event.minute,
                 status="send_failed",
-                reddit_post_id=post_with_media.post_id,
+                reddit_post_id=post.post_id,
                 file_path=str(download.file_path),
                 error_message=result.error,
             )
@@ -179,41 +178,41 @@ class Orchestrator:
             if (now - updated).total_seconds() < backoff_seconds:
                 continue
 
-            # Reconstruct a minimal GoalEvent for retry
-            goal = GoalEvent(
-                match_id=row["match_id"],
-                scorer=row["scorer"],
-                assist=None,
-                minute=row["minute"],
-                home_team="",
-                away_team="",
-                home_score=0,
-                away_score=0,
-                scoring_team="",
-                aggregate=None,
-                timestamp=now,
-            )
+            event_id = row["event_id"]
+            scorer = row["scorer"]
+            minute = row["minute"]
+            reddit_post_id = row.get("reddit_post_id")
 
             logger.info(
                 "Retrying goal %s %d' (attempt %d/%d)",
-                goal.scorer, goal.minute, retry_count + 1, self._config.max_retries,
+                scorer, minute, retry_count + 1, self._config.max_retries,
             )
 
-            # Re-run the pipeline
-            posts = await self._searcher.search_goal_clip(goal)
-            post_with_media = next((p for p in posts if p.media_url), None)
+            # Re-scan for this goal's clip
+            scan_results = await self._scanner.scan_new_posts(
+                self._config.monitored_teams
+            )
+            # Find a matching post for this event's scorer+minute
+            matched = None
+            for sr in scan_results:
+                if sr.event.scorer == scorer and sr.event.minute == minute:
+                    matched = sr
+                    break
 
-            if not post_with_media:
+            if not matched or not matched.post.media_url:
                 await self._store.update_status(
-                    goal.match_id, goal.scorer, goal.minute,
+                    matched.event.home_team if matched else "",
+                    matched.event.away_team if matched else "",
+                    scorer, minute,
                     status="no_clip",
                 )
                 continue
 
-            download = await self._downloader.download(post_with_media, goal)
+            download = await self._downloader.download(matched.post, matched.event)
             if not download:
                 await self._store.update_status(
-                    goal.match_id, goal.scorer, goal.minute,
+                    matched.event.home_team, matched.event.away_team,
+                    scorer, minute,
                     status="failed",
                     error_message="Download failed on retry",
                 )
@@ -222,14 +221,17 @@ class Orchestrator:
             result = await self._sender.send_goal_clip(download)
             if result.success:
                 await self._store.record_goal(
-                    goal.match_id, goal.scorer, goal.minute,
+                    matched.event.event_id,
+                    matched.event.home_team, matched.event.away_team,
+                    scorer, minute,
                     status="sent",
-                    reddit_post_id=post_with_media.post_id,
+                    reddit_post_id=matched.post.post_id,
                     telegram_msg_id=result.message_id,
                 )
             else:
                 await self._store.update_status(
-                    goal.match_id, goal.scorer, goal.minute,
+                    matched.event.home_team, matched.event.away_team,
+                    scorer, minute,
                     status="send_failed",
                     error_message=result.error,
                 )

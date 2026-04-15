@@ -21,7 +21,6 @@ class Config:
 
     def __init__(self) -> None:
         # Required
-        self.football_api_key: str = _require("FOOTBALL_API_KEY")
         self.reddit_client_id: str = _require("REDDIT_CLIENT_ID")
         self.reddit_client_secret: str = _require("REDDIT_CLIENT_SECRET")
         self.telegram_bot_token: str = _require("TELEGRAM_BOT_TOKEN")
@@ -37,7 +36,7 @@ class Config:
             "REDDIT_USER_AGENT", "SoccerGoals/1.0"
         )
         self.polling_interval: int = int(
-            os.environ.get("POLLING_INTERVAL_SECONDS", "45")
+            os.environ.get("POLLING_INTERVAL_SECONDS", "30")
         )
         self.max_post_age_minutes: int = int(
             os.environ.get("MAX_POST_AGE_MINUTES", "30")

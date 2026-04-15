@@ -11,14 +11,13 @@ class TestConfigLoading:
         from soccergoals.config import Config
 
         cfg = Config()
-        assert cfg.football_api_key == "test-football-key"
         assert cfg.reddit_client_id == "test-reddit-id"
         assert cfg.reddit_client_secret == "test-reddit-secret"
         assert cfg.telegram_bot_token == "test-telegram-token"
         assert cfg.telegram_channel_id == "@test_channel"
 
     def test_missing_required_var_exits(self, fake_env):
-        env_without_key = {k: v for k, v in os.environ.items() if k != "FOOTBALL_API_KEY"}
+        env_without_key = {k: v for k, v in os.environ.items() if k != "REDDIT_CLIENT_ID"}
         with patch.dict(os.environ, env_without_key, clear=True):
             with pytest.raises(SystemExit):
                 from soccergoals.config import Config
@@ -39,7 +38,6 @@ class TestConfigLoading:
 
     def test_monitored_teams_strips_whitespace(self, tmp_path):
         env = {
-            "FOOTBALL_API_KEY": "k",
             "REDDIT_CLIENT_ID": "i",
             "REDDIT_CLIENT_SECRET": "s",
             "TELEGRAM_BOT_TOKEN": "t",
@@ -60,7 +58,7 @@ class TestConfigDefaults:
         from soccergoals.config import Config
 
         cfg = Config()
-        assert cfg.polling_interval == 45
+        assert cfg.polling_interval == 30
 
     def test_default_max_post_age(self, fake_env):
         os.environ.pop("MAX_POST_AGE_MINUTES", None)

@@ -3,58 +3,34 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from soccergoals.models import DownloadResult, GoalEvent, RedditPost, SendResult
+from soccergoals.models import DownloadResult, GoalEvent, RedditPost, ScanResult, SendResult
 
 
 class TestGoalEvent:
     def test_create_with_all_fields(self):
         e = GoalEvent(
-            match_id="1",
+            event_id="argentina_vs_france_2026-01-01",
             scorer="Messi",
-            assist="Di María",
             minute=45,
             home_team="Argentina",
             away_team="France",
             home_score=2,
             away_score=1,
-            scoring_team="Argentina",
-            aggregate="3-2",
             timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
         assert e.scorer == "Messi"
-        assert e.assist == "Di María"
-        assert e.aggregate == "3-2"
-
-    def test_create_with_none_optionals(self):
-        e = GoalEvent(
-            match_id="2",
-            scorer="Mbappé",
-            assist=None,
-            minute=90,
-            home_team="A",
-            away_team="B",
-            home_score=0,
-            away_score=1,
-            scoring_team="B",
-            aggregate=None,
-            timestamp=datetime.now(timezone.utc),
-        )
-        assert e.assist is None
-        assert e.aggregate is None
+        assert e.event_id == "argentina_vs_france_2026-01-01"
 
     def test_minute_zero(self):
         """Minute 0 is valid for kick-off goals."""
         e = GoalEvent(
-            match_id="3",
+            event_id="a_vs_b_2026-01-01",
             scorer="X",
-            assist=None,
             minute=0,
             home_team="A",
             away_team="B",
             home_score=1,
             away_score=0,
-            scoring_team="A",
-            aggregate=None,
             timestamp=datetime.now(timezone.utc),
         )
         assert e.minute == 0
@@ -85,12 +61,42 @@ class TestRedditPost:
         assert p.media_url is None
 
 
+class TestScanResult:
+    def test_create_scan_result(self):
+        e = GoalEvent(
+            event_id="a_vs_b_2026-01-01",
+            scorer="X",
+            minute=10,
+            home_team="A",
+            away_team="B",
+            home_score=1,
+            away_score=0,
+            timestamp=datetime.now(timezone.utc),
+        )
+        p = RedditPost(
+            post_id="xyz",
+            title="Goal",
+            url="https://streamff.link/v/1",
+            media_url="https://streamff.link/v/1",
+            score=50,
+            created_utc=datetime.now(timezone.utc),
+        )
+        sr = ScanResult(event=e, post=p)
+        assert sr.event.scorer == "X"
+        assert sr.post.post_id == "xyz"
+
+
 class TestDownloadResult:
     def test_create_download_result(self, tmp_path: Path):
         e = GoalEvent(
-            match_id="1", scorer="X", assist=None, minute=10,
-            home_team="A", away_team="B", home_score=1, away_score=0,
-            scoring_team="A", aggregate=None, timestamp=datetime.now(timezone.utc),
+            event_id="a_vs_b_2026-01-01",
+            scorer="X",
+            minute=10,
+            home_team="A",
+            away_team="B",
+            home_score=1,
+            away_score=0,
+            timestamp=datetime.now(timezone.utc),
         )
         d = DownloadResult(
             event=e,

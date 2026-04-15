@@ -4,9 +4,6 @@ services:
     restart: unless-stopped
 
     environment:
-      # --- Football API (api-football.com via RapidAPI) ---
-      FOOTBALL_API_KEY: "${FOOTBALL_API_KEY}"
-
       # --- Reddit API (reddit.com/prefs/apps) ---
       REDDIT_CLIENT_ID: "${REDDIT_CLIENT_ID}"
       REDDIT_CLIENT_SECRET: "${REDDIT_CLIENT_SECRET}"
@@ -23,7 +20,7 @@ services:
 
       # --- Polling & retry settings ---
       # Seconds between poll cycles
-      POLLING_INTERVAL_SECONDS: "${POLLING_INTERVAL_SECONDS:-45}"
+      POLLING_INTERVAL_SECONDS: "${POLLING_INTERVAL_SECONDS:-30}"
       # Ignore Reddit posts older than this (minutes)
       MAX_POST_AGE_MINUTES: "${MAX_POST_AGE_MINUTES:-30}"
       # Max retry attempts for failed operations

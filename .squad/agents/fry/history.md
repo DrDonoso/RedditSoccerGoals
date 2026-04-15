@@ -9,7 +9,39 @@
 
 <!-- Append new learnings below. Each entry is something lasting about the project. -->
 
-### Full implementation — 2026-04-15
+### Reddit-first rewrite (Option A) — 2026-04-15
+
+**Scope:** Full codebase rewrite to eliminate Football API dependency. Reddit is now the sole data source.
+
+**Files deleted (2):**
+- `poller.py` — Match Poller removed entirely
+- `searcher.py` — Reddit Searcher removed (merged into scanner)
+
+**Files created (1):**
+- `scanner.py` — RedditGoalScanner: browses r/soccer/new via asyncpraw, parses goal titles with GOAL_TITLE_PATTERN regex, fuzzy-matches monitored teams (with alias map), extracts streamff.link URLs. Returns `list[ScanResult]`.
+
+**Files updated (9):**
+- `models.py` — GoalEvent simplified (removed match_id, assist, scoring_team, aggregate; added event_id). Added ScanResult dataclass.
+- `config.py` — Removed FOOTBALL_API_KEY. Changed POLLING_INTERVAL_SECONDS default from 45 to 30.
+- `store.py` — Replaced poll_state table with seen_posts table. New two-layer dedup: post_id (layer 1) + event_hash with normalized team names/surname (layer 2). Updated all methods to use event_id + (home_team, away_team, scorer, minute) signature. Hash now 16 chars, uses unicodedata for accent stripping.
+- `main.py` — Orchestrator rewired: scanner replaces poller+searcher. New _tick: scan → dedup (post_id then event_hash) → download → send → record. Retry re-scans r/soccer/new.
+- `downloader.py` — Uses event_id instead of match_id for temp file naming.
+- `sender.py` — No code changes needed (caption format already correct).
+- `docker-compose.yml` — Polling default changed to 30.
+- `Dockerfile` — Entrypoint changed to `python -m soccergoals`.
+- `README.md` — Rewritten: 3-step pipeline (Scan→Download→Send), removed all Football API references.
+- `__main__.py` — Added `if __name__ == "__main__"` guard.
+
+**Tests updated (6 files):**
+- Deleted `test_poller.py`, `test_searcher.py`
+- Created `test_scanner.py` (24 tests: title regex, team normalization, fuzzy matching, media extraction, event ID, full scanner integration)
+- Updated `conftest.py`, `test_config.py`, `test_models.py`, `test_store.py`, `test_downloader.py`
+- All 78 tests pass.
+
+**Key patterns:**
+- Event dedup: `sha256(normalize(home_team)|normalize(away_team)|normalize(scorer_surname)|minute)[:16]`
+- Team alias map for common abbreviations (Barça→Barcelona, Atleti→Atletico Madrid, etc.)
+- Two-layer dedup: seen_posts table (post_id) + processed_goals table (event_hash)
 
 **Files created (10 total under `src/soccergoals/`):**
 - `pyproject.toml` — setuptools-based, pip-compatible (no poetry). Deps: httpx, asyncpraw, aiosqlite, python-telegram-bot, yt-dlp.

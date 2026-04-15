@@ -25,4 +25,4 @@ RUN mkdir -p /app/data && chown -R app:app /app/data
 
 USER app
 
-ENTRYPOINT ["python", "-m", "soccergoals.main"]
+ENTRYPOINT ["python", "-m", "soccergoals"]
