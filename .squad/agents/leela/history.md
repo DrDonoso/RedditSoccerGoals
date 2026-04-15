@@ -38,3 +38,11 @@
 - Scoring team detection must rely on `GoalEvent.scoring_team` from the football API, never on Reddit title brackets
 - Reddit search queries should be keyword-based (scorer + teams + score) rather than bracket-format-dependent
 - Architecture doc updated; decision filed: `.squad/decisions/inbox/leela-title-format-variants.md`
+
+### 2026-04-15 — Docker Hosting & Env Var Config
+- drdonoso confirmed: project runs with Docker, config via docker-compose env vars, no config.toml
+- Created: `Dockerfile` (Python 3.12-slim, non-root user, ffmpeg + yt-dlp)
+- Created: `docker-compose.yml` (single service, all config as env vars, volume for SQLite, `restart: unless-stopped`)
+- Created: `.dockerignore`, `README.md` (quick start guide)
+- Updated: `docs/architecture.md` — tech stack table (Docker hosting), config section (env vars replace TOML), directory structure added, error handling (container restart policy)
+- Decision filed: `.squad/decisions/inbox/leela-docker-hosting.md`

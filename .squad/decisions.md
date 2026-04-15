@@ -31,6 +31,14 @@ Impact: Telegram Sender added, GoalEvent model updated, RedditSearcher simplifie
 
 Both r/soccer title formats are valid (with and without score brackets). Scoring team attribution comes from API-Football, not Reddit titles. Search queries are keyword-based (scorer name, team names, score digits) — no bracket-specific patterns. Future title parser must accept both variants. See `docs/architecture.md`.
 
+### Docker Hosting with Env Var Config
+- **Author:** Leela (Lead)
+- **Date:** 2026-04-15
+- **Decided by:** drdonoso
+- **Status:** Confirmed
+
+Docker via docker-compose for hosting. All configuration driven by environment variables in docker-compose.yml (twelve-factor). SQLite persisted via volume mount (`./data:/app/data`). Single container with `restart: unless-stopped`. No config.toml or separate config files. Files created: `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `README.md`; updated `docs/architecture.md`.
+
 ## Governance
 
 - All meaningful changes require team consensus

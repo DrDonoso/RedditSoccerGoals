@@ -239,10 +239,11 @@ every 45 seconds:
 | **Media extraction (primary)** | httpx (direct download) | Primary downloader for streamff.link videos |
 | **Telegram** | python-telegram-bot | Async Telegram Bot API client for sending videos to channels |
 | **Database** | SQLite (via aiosqlite) | Zero-config state persistence, perfect for single-process workers |
-| **Config** | TOML (pyproject.toml + config.toml) | Python-native config format, clean and readable |
+| **Config** | Environment variables (docker-compose.yml) | Twelve-factor app style, no config files to manage |
 | **Scheduling** | Built-in asyncio loop | No need for Celery/APScheduler for a single polling loop |
 | **Packaging** | uv | Fast, modern Python package manager |
-| **Hosting** | Local machine / cheap VPS / Docker | Single process, low resource needs. Docker optional but straightforward. |
+| **Hosting** | Docker (docker-compose) | Single container, restart policy, env-var-driven config |
+| **Containerization** | Docker + docker-compose | Reproducible deployments, volume-mounted SQLite for persistence |
 
 ### Why Python over alternatives?
 
@@ -252,36 +253,47 @@ every 45 seconds:
 
 ## Configuration
 
-```toml
-# config.toml
-[polling]
-interval_seconds = 45
+All configuration is driven by **environment variables** defined in `docker-compose.yml`. The application reads from `os.environ` at startup — no config files needed.
 
-[teams]
-monitored = ["Espanyol", "Real Madrid", "Barcelona", "Atletico Madrid"]
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `FOOTBALL_API_KEY` | Yes | — | API-Football key (via RapidAPI) |
+| `REDDIT_CLIENT_ID` | Yes | — | Reddit OAuth app client ID |
+| `REDDIT_CLIENT_SECRET` | Yes | — | Reddit OAuth app client secret |
+| `REDDIT_USER_AGENT` | No | `SoccerGoals/1.0` | User-Agent string for Reddit API requests |
+| `TELEGRAM_BOT_TOKEN` | Yes | — | Telegram bot token from BotFather |
+| `TELEGRAM_CHANNEL_ID` | Yes | — | Target Telegram channel ID (e.g. `-100XXXXXXXXXX`) |
+| `MONITORED_TEAMS` | Yes | — | Comma-separated team names (e.g. `Espanyol,Real Madrid,Barcelona`) |
+| `POLLING_INTERVAL_SECONDS` | No | `45` | Seconds between each poll cycle |
+| `MAX_POST_AGE_MINUTES` | No | `30` | Ignore Reddit posts older than this |
+| `MAX_RETRIES` | No | `3` | Max retry attempts for failed operations |
 
-[football_api]
-provider = "api-football"   # extensible to other providers
-base_url = "https://v3.football.api-sports.io"
-# API key stored in environment variable: FOOTBALL_API_KEY
+The app reads these at startup and fails fast if any required variable is missing.
 
-[reddit]
-subreddit = "soccer"  # hardcoded to r/soccer
-max_results = 5
-max_post_age_minutes = 30   # ignore old posts
+## Directory Structure
 
-[telegram]
-# Bot token stored in environment variable: TELEGRAM_BOT_TOKEN
-channel_id = "-100XXXXXXXXXX"  # target Telegram channel
-
-[media]
-temp_dir = "./tmp"          # temporary downloads, cleaned after sending
-max_file_size_mb = 100
-preferred_format = "mp4"
-max_retries = 3
-
-[database]
-path = "./data/soccergoals.db"
+```
+SoccerGoals/
+├── Dockerfile                # Container image definition
+├── docker-compose.yml        # Service config + environment variables
+├── .dockerignore             # Files excluded from Docker build
+├── pyproject.toml            # Python project metadata + dependencies
+├── README.md                 # Quick start and usage guide
+├── data/                     # SQLite database (volume-mounted, persisted)
+│   └── soccergoals.db
+├── src/
+│   └── soccergoals/
+│       ├── __init__.py
+│       ├── main.py           # Entry point + orchestrator loop
+│       ├── poller.py         # Match Poller (API-Football)
+│       ├── searcher.py       # Reddit Searcher (r/soccer)
+│       ├── downloader.py     # Media Downloader (streamff + yt-dlp)
+│       ├── sender.py         # Telegram Sender
+│       ├── store.py          # State Store (SQLite)
+│       └── models.py         # Shared data models
+├── tests/
+└── docs/
+    └── architecture.md       # This file
 ```
 
 ## Error Handling & Resilience
@@ -297,6 +309,7 @@ path = "./data/soccergoals.db"
 | Telegram rate limited | Respect Telegram rate limits (~30 msgs/sec for bots). Queue and retry. |
 | Duplicate goal detection | Hash `match_id + scorer + minute` for dedup |
 | Process crash | SQLite state survives restart. On startup, retry `pending`/`failed` goals. |
+| Container crash | `restart: unless-stopped` policy in docker-compose ensures automatic recovery. SQLite data persists via volume mount. |
 | API key missing/invalid | Fail fast on startup with clear error message (includes Telegram bot token) |
 
 ## Directory Structure (Proposed)
