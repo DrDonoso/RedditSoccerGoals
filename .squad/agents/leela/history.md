@@ -31,3 +31,10 @@
 - Architecture doc fully updated, 4 of 7 open questions resolved (leagues, storage, notifications, title format)
 - Remaining open: hosting, retention, tooling prefs
 - Decision filed: `.squad/decisions/inbox/leela-scope-decisions.md`
+
+### 2026-04-15 — Title Format Variants
+- r/soccer title format is NOT always consistent — brackets around the score are optional
+- Two known variants: with brackets (`[1]`) and without brackets (`1`)
+- Scoring team detection must rely on `GoalEvent.scoring_team` from the football API, never on Reddit title brackets
+- Reddit search queries should be keyword-based (scorer + teams + score) rather than bracket-format-dependent
+- Architecture doc updated; decision filed: `.squad/decisions/inbox/leela-title-format-variants.md`

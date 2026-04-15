@@ -1,1 +1,1 @@
-feat: update architecture with scope decisions — Telegram, streamff, team filtering
+feat: handle r/soccer title variants — brackets optional

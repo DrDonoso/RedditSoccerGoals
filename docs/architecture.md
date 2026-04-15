@@ -59,7 +59,7 @@ class GoalEvent:
     away_team: str
     home_score: int
     away_score: int
-    scoring_team: str        # which team scored (the one with [brackets] in the title)
+    scoring_team: str        # which team scored (authoritative, from football API — not derived from Reddit title brackets)
     aggregate: str | None    # e.g. "3-2 on agg." — optional
     timestamp: datetime
 
@@ -76,21 +76,36 @@ class MatchPoller(Protocol):
 **Source:** Always **r/soccer** — hardcoded, not configurable.
 
 **Title convention (actual r/soccer format):**
-```
-{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'
-```
-Example: `Atletico Madrid [1] - 2 Barcelona [3-2 on agg.] - Ademola Lookman 31'`
 
-- The `[X]` next to a team name indicates **who scored** (the team with brackets around the new score)
-- Aggregate info like `[3-2 on agg.]` is optional
+r/soccer titles follow two known variants — brackets around the new score are **common but not guaranteed**:
+
+```
+# Variant A — with brackets (most common)
+{home_team} [{home_score}] - {away_score} {away_team} [{aggregate}] - {scorer} {minute}'
+
+# Variant B — without brackets
+{home_team} {home_score} - {away_score} {away_team} - {scorer} {minute}'
+```
+
+Examples:
+- **With brackets:** `Atletico Madrid [1] - 2 Barcelona [3-2 on agg.] - Ademola Lookman 31'`
+- **Without brackets:** `Atletico Madrid 1 - 0 Barcelona - Ademola Lookman 31'`
+
+- When present, `[X]` next to a team name indicates **who scored** (the team with brackets around the new score)
+- When brackets are absent, the title alone does **not** indicate which team scored
+- Aggregate info like `[3-2 on agg.]` is optional and only appears in the bracketed variant
 - The `'` after the minute is standard
 
-**Approach:**
-- Build a search query from the GoalEvent fields matching this title format
+**Scoring team detection:** We do **not** rely on Reddit title brackets to determine which team scored. The `GoalEvent.scoring_team` field — sourced from the football API — is the authoritative source for goal attribution. Brackets in the title are useful only as an extra signal for search matching, never as a source of truth.
+
+**Approach — search query strategy:**
+- Build a **keyword-based** search query from the GoalEvent fields: scorer name, both team names, and current score digits. Do **not** attempt to match the exact bracket format, since it varies between posts.
+- Example query for the goal above: `Atletico Madrid Barcelona Lookman 1 - 0` or `Atletico Madrid Barcelona Ademola Lookman`
 - Search r/soccer using Reddit's API
 - Rank results by recency and relevance
 - Extract the **streamff.link** video URL from the post body/URL (this is the primary media host for r/soccer goal clips)
 - Filter for posts containing video/media links
+- The title parser should accept **both** bracket and non-bracket formats gracefully when validating search results
 
 **Rate limiting:** Reddit API allows 100 requests per minute per OAuth client. We'll stay well under this with natural polling cadence.
 

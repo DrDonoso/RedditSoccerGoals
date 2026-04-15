@@ -23,6 +23,14 @@ Five scope decisions confirmed:
 
 Impact: Telegram Sender added, GoalEvent model updated, RedditSearcher simplified, config restructured. Open questions reduced to 3 (hosting, retention, tooling).
 
+### r/soccer Title Format Variants
+- **Author:** Leela (Lead)
+- **Date:** 2026-04-15
+- **Requested by:** drdonoso
+- **Status:** Accepted
+
+Both r/soccer title formats are valid (with and without score brackets). Scoring team attribution comes from API-Football, not Reddit titles. Search queries are keyword-based (scorer name, team names, score digits) — no bracket-specific patterns. Future title parser must accept both variants. See `docs/architecture.md`.
+
 ## Governance
 
 - All meaningful changes require team consensus
