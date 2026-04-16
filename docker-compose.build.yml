@@ -1,5 +1,6 @@
 services:
   soccergoals:
+    build: .
     image: drdonoso/soccergoals
     restart: unless-stopped
 
