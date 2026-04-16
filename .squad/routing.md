@@ -15,6 +15,8 @@ How to decide who handles what.
 | Scope & priorities | Leela | What to build next, trade-offs, decisions |
 | Docker & builds | Bender | Dockerfile, docker-compose, image builds, CI/CD |
 | DevOps & deploy | Bender | Container config, pipelines, infrastructure |
+| Security audit | Nibbler | Secret scanning, vulnerability checks, dependency safety |
+| Security review | Nibbler | Code review for secrets, OWASP issues, Docker security |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing
@@ -26,6 +28,7 @@ How to decide who handles what.
 | `squad:fry` | Implementation, API integration, background process | Fry |
 | `squad:hermes` | Testing, quality, edge cases | Hermes |
 | `squad:bender` | Docker, CI/CD, builds, deployment | Bender |
+| `squad:nibbler` | Security audits, secret scanning, vulnerabilities | Nibbler |
 
 ### How Issue Assignment Works
 

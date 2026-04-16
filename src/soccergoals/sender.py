@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+from pathlib import Path
 
 from telegram import Bot
 
@@ -10,6 +13,35 @@ from soccergoals.models import DownloadResult, SendResult
 logger = logging.getLogger(__name__)
 
 TELEGRAM_FILE_LIMIT = 50 * 1024 * 1024  # 50 MB
+
+
+async def _probe_video(path: Path) -> dict[str, int]:
+    """Use ffprobe to extract width, height, and duration from a video file."""
+    cmd = [
+        "ffprobe", "-v", "quiet", "-print_format", "json",
+        "-show_streams", "-select_streams", "v:0", str(path),
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+        if proc.returncode != 0:
+            return {}
+        data = json.loads(stdout)
+        stream = data.get("streams", [{}])[0]
+        result: dict[str, int] = {}
+        if "width" in stream:
+            result["width"] = int(stream["width"])
+        if "height" in stream:
+            result["height"] = int(stream["height"])
+        duration = stream.get("duration") or data.get("format", {}).get("duration")
+        if duration:
+            result["duration"] = int(float(duration))
+        return result
+    except Exception:
+        logger.debug("ffprobe failed, sending without dimensions")
+        return {}
 
 
 class TelegramSender:
@@ -42,11 +74,15 @@ class TelegramSender:
             )
 
         try:
+            video_meta = await _probe_video(download.file_path)
+
             with open(download.file_path, "rb") as video_file:
                 message = await self._bot.send_video(
                     chat_id=self._channel_id,
                     video=video_file,
                     caption=caption,
+                    supports_streaming=True,
+                    **video_meta,
                     read_timeout=60,
                     write_timeout=60,
                     connect_timeout=30,

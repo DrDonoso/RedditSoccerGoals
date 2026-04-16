@@ -16,6 +16,7 @@
 | Fry | Backend Dev | .squad/agents/fry/charter.md | 🔧 Backend |
 | Hermes | Tester | .squad/agents/hermes/charter.md | 🧪 Tester |
 | Bender | DevOps | .squad/agents/bender/charter.md | ⚙️ DevOps |
+| Nibbler | Security | .squad/agents/nibbler/charter.md | 🔒 Security |
 | Scribe | Scribe | .squad/agents/scribe/charter.md | 📋 Scribe |
 | Ralph | Work Monitor | .squad/agents/ralph/charter.md | 🔄 Monitor |
 

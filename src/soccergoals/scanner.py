@@ -28,7 +28,7 @@ GOAL_TITLE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-STREAMFF_RE = re.compile(r"https?://(?:www\.)?streamff\.link/\S+", re.IGNORECASE)
+STREAMFF_RE = re.compile(r"https?://(?:www\.)?streamff\.(?:link|com)/\S+", re.IGNORECASE)
 VIDEO_URL_RE = re.compile(
     r"https?://(?:www\.)?(?:streamable\.com|v\.redd\.it|streamin\.me|dubz\.link)/\S+",
     re.IGNORECASE,

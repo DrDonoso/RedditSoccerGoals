@@ -17,6 +17,10 @@ STREAMFF_VIDEO_RE = re.compile(
     re.IGNORECASE,
 )
 
+# streamff.com/v/{id} or streamff.link/v/{id} → cdn.streamff.one/{id}.mp4
+STREAMFF_CDN_ID_RE = re.compile(r"streamff\.(?:com|link)/v/([a-zA-Z0-9]+)")
+STREAMFF_CDN_BASE = "https://cdn.streamff.one"
+
 
 class MediaDownloader:
     """Downloads goal clip videos from streamff.link or via yt-dlp fallback."""
@@ -45,8 +49,8 @@ class MediaDownloader:
         safe_name = re.sub(r"[^\w\-]", "_", f"{event.event_id}_{event.scorer}_{event.minute}")
         dest = self._temp_dir / f"{safe_name}.mp4"
 
-        # Primary: direct download for streamff.link
-        if "streamff.link" in media_url:
+        # Primary: direct download for streamff.link / streamff.com
+        if "streamff.link" in media_url or "streamff.com" in media_url:
             result = await self._download_streamff(media_url, dest, event)
             if result:
                 return result
@@ -58,8 +62,17 @@ class MediaDownloader:
     async def _download_streamff(
         self, url: str, dest: Path, event: GoalEvent
     ) -> DownloadResult | None:
-        """Download from streamff.link by extracting the video source URL."""
+        """Download from streamff.link or streamff.com."""
         try:
+            # streamff.com uses a CDN — resolve directly without page scrape
+            id_match = STREAMFF_CDN_ID_RE.search(url)
+            if id_match:
+                video_url = f"{STREAMFF_CDN_BASE}/{id_match.group(1)}.mp4"
+                logger.info("Downloading from CDN: %s", video_url)
+                return await self._download_file(video_url, dest, event, url)
+
+            logger.debug("No CDN match for URL: %s, falling back to page scrape", url)
+            # streamff.link — scrape page HTML for video source
             page_resp = await self._client.get(url)
             page_resp.raise_for_status()
             page_html = page_resp.text
@@ -72,7 +85,7 @@ class MediaDownloader:
             video_url = match.group(1)
             return await self._download_file(video_url, dest, event, url)
         except httpx.HTTPError as exc:
-            logger.warning("Streamff page fetch failed: %s", exc)
+            logger.warning("Streamff download failed: %s", exc)
             return None
 
     async def _download_file(

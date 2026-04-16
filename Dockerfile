@@ -13,15 +13,17 @@ RUN groupadd --gid 1000 app && \
 
 WORKDIR /app
 
-# Install Python dependencies first (cache layer)
+# Install Python dependencies (cache-friendly: only re-runs when pyproject.toml changes)
 COPY pyproject.toml ./
-RUN pip install --no-cache-dir .
+RUN mkdir -p src/soccergoals && touch src/soccergoals/__init__.py && \
+    pip install --no-cache-dir .
 
-# Copy source code
+# Copy full source and reinstall package (deps already cached)
 COPY src/ ./src/
+RUN pip install --no-cache-dir --no-deps .
 
-# Create data directory for SQLite
-RUN mkdir -p /app/data && chown -R app:app /app/data
+# Create writable directories for non-root user
+RUN mkdir -p /app/data /app/tmp && chown -R app:app /app/data /app/tmp
 
 USER app
 
