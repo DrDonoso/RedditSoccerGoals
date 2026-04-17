@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 import re
 import unicodedata
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
+from html import unescape
 
 import httpx
 
@@ -13,13 +16,22 @@ from soccergoals.models import GoalEvent, RedditPost, ScanResult
 
 logger = logging.getLogger(__name__)
 
-REDDIT_NEW_URL = "https://www.reddit.com/r/soccer/new.json"
+# old.reddit.com HTML works reliably from Docker (www.reddit.com/...json gets 403)
+REDDIT_HTML_URL = "https://old.reddit.com/r/soccer/new/"
+
+# Max pages to fetch when paginating through r/soccer/new
+MAX_PAGES = 5
+# Retries per request
+_MAX_REQUEST_RETRIES = 3
+_RETRY_DELAY_SECONDS = 2
+# Delay between page fetches to avoid rate-limiting
+_PAGE_DELAY_SECONDS = 1.5
 
 GOAL_TITLE_PATTERN = re.compile(
     r"^(?P<home_team>.+?)\s+"           # Home team name (non-greedy)
-    r"\[?(?P<home_score>\d+)\]?\s*"     # Home score, optional brackets
+    r"(?P<home_bracket>\[)?(?P<home_score>\d+)\]?\s*"  # Home score, optional brackets
     r"-\s*"                              # Score separator
-    r"\[?(?P<away_score>\d+)\]?\s+"     # Away score, optional brackets
+    r"(?P<away_bracket>\[)?(?P<away_score>\d+)\]?\s+"  # Away score, optional brackets
     r"(?P<away_team>.+?)\s+"            # Away team name (non-greedy)
     r"(?:\[.*?\]\s*)?"                   # Optional aggregate in brackets (ignored)
     r"-\s+"                              # Separator before scorer
@@ -30,9 +42,40 @@ GOAL_TITLE_PATTERN = re.compile(
 
 STREAMFF_RE = re.compile(r"https?://(?:www\.)?streamff\.(?:link|com)/\S+", re.IGNORECASE)
 VIDEO_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:streamable\.com|v\.redd\.it|streamin\.me|dubz\.link)/\S+",
+    r"https?://(?:www\.)?(?:streamable\.com|v\.redd\.it|streamin\.(?:me|link)|streamain\.com|dubz\.link)/\S+",
     re.IGNORECASE,
 )
+
+# HTML parsing patterns for old.reddit.com
+_POST_DATA_RE = re.compile(
+    r'data-fullname="(?P<fullname>t3_[^"]+)".*?'
+    r'data-timestamp="(?P<timestamp>\d+)".*?'
+    r'data-url="(?P<url>[^"]*)".*?'
+    r'data-permalink="(?P<permalink>[^"]*)"',
+    re.DOTALL,
+)
+_TITLE_RE = re.compile(
+    r'<a\s+class="[^"]*title[^"]*"[^>]*>(?P<title>[^<]+)</a>',
+)
+_NEXT_PAGE_RE = re.compile(
+    r'<span\s+class="next-button"><a[^>]*href="([^"]*)"',
+)
+
+# Qualifier phrases to strip from scorer names (order matters: longest first)
+_SCORER_QUALIFIERS_RE = re.compile(
+    r"\b(?:great\s+goal|wonderful\s+goal|brilliant\s+goal|amazing\s+goal"
+    r"|own\s+goal|free[\s-]kick|header|penalty|volley|long\s+shot|solo\s+goal"
+    r"|bicycle\s+kick|chip|lob|brace|hat[\s-]trick|golazo|solo\s+run)\b",
+    re.IGNORECASE,
+)
+
+
+def _clean_scorer(name: str) -> str:
+    """Remove qualifier phrases (great goal, penalty, etc.) from scorer name."""
+    cleaned = _SCORER_QUALIFIERS_RE.sub("", name)
+    # Collapse multiple spaces and strip
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
 
 TEAM_ALIASES: dict[str, str] = {
     "barça": "barcelona",
@@ -69,7 +112,7 @@ def _fuzzy_match_team(team_name: str, monitored: list[str]) -> bool:
         cand_norm = _normalize_team(candidate)
         if cand_norm in norm or norm in cand_norm:
             return True
-        if SequenceMatcher(None, norm, cand_norm).ratio() >= 0.65:
+        if SequenceMatcher(None, norm, cand_norm).ratio() >= 0.80:
             return True
     return False
 
@@ -94,14 +137,51 @@ def _make_event_id(home_team: str, away_team: str, date: datetime) -> str:
     return f"{h}_vs_{a}_{date.strftime('%Y-%m-%d')}"
 
 
+def _parse_html_posts(html: str) -> list[dict]:
+    """Parse old.reddit.com HTML into a list of post dicts."""
+    posts: list[dict] = []
+    blocks = re.split(r'(?=data-fullname="t3_)', html)
+    for block in blocks:
+        m = _POST_DATA_RE.search(block)
+        if not m:
+            continue
+        tm = _TITLE_RE.search(block)
+        title = unescape(tm.group("title").strip()) if tm else ""
+        posts.append({
+            "id": m.group("fullname").replace("t3_", ""),
+            "fullname": m.group("fullname"),
+            "created_utc": int(m.group("timestamp")) / 1000,
+            "url": unescape(m.group("url")),
+            "permalink": unescape(m.group("permalink")),
+            "title": title,
+        })
+    return posts
+
+
 class RedditGoalScanner:
-    """Browses r/soccer/new via public JSON API, parses goal post titles, and returns matching ScanResults."""
+    """Browses r/soccer/new via old.reddit.com HTML, parses goal post titles, and returns matching ScanResults."""
+
+    _DEFAULT_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    )
 
     def __init__(self, config: Config) -> None:
         self._max_age_minutes = config.max_post_age_minutes
-        self._user_agent = config.reddit_user_agent
         self._client = httpx.AsyncClient(
-            headers={"User-Agent": self._user_agent},
+            headers={
+                "User-Agent": self._DEFAULT_UA,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Cookie": "over18=1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+                "Cache-Control": "max-age=0",
+            },
             follow_redirects=True,
             timeout=30.0,
         )
@@ -109,80 +189,142 @@ class RedditGoalScanner:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def _fetch_page(
+        self, url: str, page: int,
+    ) -> tuple[list[dict] | None, str | None]:
+        """Fetch one HTML page from old.reddit.com and parse posts."""
+        for attempt in range(1, _MAX_REQUEST_RETRIES + 1):
+            try:
+                resp = await self._client.get(url)
+                if resp.status_code == 429 and attempt < _MAX_REQUEST_RETRIES:
+                    delay = _RETRY_DELAY_SECONDS * attempt + random.uniform(0, 2)
+                    logger.debug(
+                        "Reddit rate-limited (page %d, attempt %d/%d), retrying in %.1fs...",
+                        page, attempt, _MAX_REQUEST_RETRIES, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                resp.raise_for_status()
+                html = resp.text
+                posts = _parse_html_posts(html)
+
+                # Extract next page URL
+                next_match = _NEXT_PAGE_RE.search(html)
+                next_url = unescape(next_match.group(1)) if next_match else None
+                return posts, next_url
+            except (httpx.HTTPError, ValueError) as exc:
+                if attempt < _MAX_REQUEST_RETRIES:
+                    delay = _RETRY_DELAY_SECONDS * attempt + random.uniform(0, 2)
+                    logger.debug(
+                        "Request error (page %d, attempt %d/%d): %s",
+                        page, attempt, _MAX_REQUEST_RETRIES, exc,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning(
+                    "Failed to fetch r/soccer/new (page %d) after %d attempts: %s",
+                    page, _MAX_REQUEST_RETRIES, exc,
+                )
+                return None, None
+        return None, None
+
     async def scan_new_posts(
         self, monitored_teams: list[str]
     ) -> list[ScanResult]:
-        """Fetch r/soccer/new and return parsed goal events for monitored teams."""
+        """Fetch r/soccer/new and return parsed goal events for monitored teams.
+
+        Scrapes old.reddit.com HTML (reliable, no 403 blocks) with pagination
+        to cover the full max_post_age window.
+        """
         results: list[ScanResult] = []
         now = datetime.now(timezone.utc)
         cutoff_seconds = self._max_age_minutes * 60
+        page_url: str | None = f"{REDDIT_HTML_URL}?limit=100"
 
-        try:
-            resp = await self._client.get(
-                REDDIT_NEW_URL, params={"limit": "50", "raw_json": "1"}
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            children = data.get("data", {}).get("children", [])
-        except (httpx.HTTPError, ValueError) as exc:
-            logger.warning("Failed to fetch r/soccer/new: %s", exc)
-            return []
+        for page in range(MAX_PAGES):
+            if page > 0:
+                await asyncio.sleep(_PAGE_DELAY_SECONDS)
+            posts, next_url = await self._fetch_page(page_url, page)
+            if posts is None:
+                break
+            if not posts:
+                break
 
-        for child in children:
-            try:
-                post_data = child.get("data", {})
-                created_utc = post_data.get("created_utc", 0)
-                created = datetime.fromtimestamp(created_utc, tz=timezone.utc)
+            reached_cutoff = False
+            for post_data in posts:
+                try:
+                    created_utc = post_data.get("created_utc", 0)
+                    created = datetime.fromtimestamp(created_utc, tz=timezone.utc)
 
-                if (now - created).total_seconds() > cutoff_seconds:
+                    if (now - created).total_seconds() > cutoff_seconds:
+                        reached_cutoff = True
+                        continue
+
+                    title = post_data.get("title", "")
+                    match = GOAL_TITLE_PATTERN.match(title)
+                    if not match:
+                        continue
+
+                    home_team = match.group("home_team").strip()
+                    away_team = match.group("away_team").strip()
+
+                    if not (
+                        _fuzzy_match_team(home_team, monitored_teams)
+                        or _fuzzy_match_team(away_team, monitored_teams)
+                    ):
+                        continue
+
+                    post_url = post_data.get("url", "")
+                    media_url = _extract_media_url(post_url, "")
+
+                    post = RedditPost(
+                        post_id=post_data.get("id", ""),
+                        title=title,
+                        url=post_url,
+                        media_url=media_url,
+                        score=0,
+                        created_utc=created,
+                    )
+
+                    # Detect which team scored (bracket position)
+                    has_home_bracket = match.group("home_bracket") is not None
+                    has_away_bracket = match.group("away_bracket") is not None
+                    if has_home_bracket:
+                        home_scored = True
+                    elif has_away_bracket:
+                        home_scored = False
+                    else:
+                        home_scored = None
+
+                    disallowed = "disallowed" in title.lower()
+
+                    event = GoalEvent(
+                        event_id=_make_event_id(home_team, away_team, created),
+                        scorer=_clean_scorer(match.group("scorer")),
+                        minute=int(match.group("minute")),
+                        home_team=home_team,
+                        away_team=away_team,
+                        home_score=int(match.group("home_score")),
+                        away_score=int(match.group("away_score")),
+                        timestamp=created,
+                        home_scored=home_scored,
+                        disallowed=disallowed,
+                    )
+
+                    results.append(ScanResult(event=event, post=post))
+                except Exception:
+                    logger.exception("Error parsing post: %s", post_data.get("id", "?"))
                     continue
 
-                title = post_data.get("title", "")
-                match = GOAL_TITLE_PATTERN.match(title)
-                if not match:
-                    continue
-
-                home_team = match.group("home_team").strip()
-                away_team = match.group("away_team").strip()
-
-                if not (
-                    _fuzzy_match_team(home_team, monitored_teams)
-                    or _fuzzy_match_team(away_team, monitored_teams)
-                ):
-                    continue
-
-                selftext = post_data.get("selftext", "") or ""
-                post_url = post_data.get("url", "")
-                media_url = _extract_media_url(post_url, selftext)
-
-                post = RedditPost(
-                    post_id=post_data.get("id", ""),
-                    title=title,
-                    url=post_url,
-                    media_url=media_url,
-                    score=post_data.get("score", 0),
-                    created_utc=created,
-                )
-
-                event = GoalEvent(
-                    event_id=_make_event_id(home_team, away_team, created),
-                    scorer=match.group("scorer").strip(),
-                    minute=int(match.group("minute")),
-                    home_team=home_team,
-                    away_team=away_team,
-                    home_score=int(match.group("home_score")),
-                    away_score=int(match.group("away_score")),
-                    timestamp=created,
-                )
-
-                results.append(ScanResult(event=event, post=post))
-            except Exception:
-                logger.exception("Error parsing post: %s", child.get("data", {}).get("id", "?"))
-                continue
+            # Stop paginating if we've passed the age cutoff or no more pages
+            if reached_cutoff or not next_url:
+                break
+            page_url = next_url
 
         logger.info(
-            "Scanned r/soccer/new: %d goal posts for monitored teams (%d with media)",
+            "Scanned r/soccer/new: %d goal posts for monitored teams (%d with media, %d pages)",
             len(results),
             sum(1 for r in results if r.post.media_url),
+            page + 1,
         )
         return results

@@ -34,7 +34,7 @@ class TestCaptionFormatting:
         assert "23'" in caption
         assert "Real Madrid" in caption
         assert "Barcelona" in caption
-        assert "1-0" in caption
+        assert "[1]-0" in caption
 
 
 class TestSuccessfulSend:
@@ -73,9 +73,12 @@ class TestSendFailure:
 
 
 class TestFileSizeLimit:
-    async def test_oversized_file_rejected(self, sender, sample_goal_event, tmp_path):
+    async def test_oversized_file_compressed_and_sent(self, sender, sample_goal_event, tmp_path):
         big_file = tmp_path / "big.mp4"
-        big_file.write_bytes(b"\x00" * 100)  # actual size doesn't matter, we set file_size_bytes
+        big_file.write_bytes(b"\x00" * 100)
+
+        compressed_file = tmp_path / "big_compressed.mp4"
+        compressed_file.write_bytes(b"\x00" * 50)
 
         download = DownloadResult(
             event=sample_goal_event,
@@ -84,10 +87,33 @@ class TestFileSizeLimit:
             file_size_bytes=TELEGRAM_FILE_LIMIT + 1,
             duration_seconds=None,
         )
-        result = await sender.send_goal_clip(download)
+        mock_msg = MagicMock()
+        mock_msg.message_id = 99
+        sender._bot.send_video = AsyncMock(return_value=mock_msg)
+
+        with patch("soccergoals.sender._compress_video", return_value=compressed_file):
+            result = await sender.send_goal_clip(download)
+
+        assert result.success is True
+        assert result.message_id == 99
+
+    async def test_oversized_file_compression_fails(self, sender, sample_goal_event, tmp_path):
+        big_file = tmp_path / "big.mp4"
+        big_file.write_bytes(b"\x00" * 100)
+
+        download = DownloadResult(
+            event=sample_goal_event,
+            file_path=big_file,
+            source_url="https://example.com/big.mp4",
+            file_size_bytes=TELEGRAM_FILE_LIMIT + 1,
+            duration_seconds=None,
+        )
+
+        with patch("soccergoals.sender._compress_video", return_value=None):
+            result = await sender.send_goal_clip(download)
 
         assert result.success is False
-        assert "too large" in result.error.lower()
+        assert "compression failed" in result.error.lower()
         sender._bot.send_video.assert_not_awaited()
 
     async def test_under_limit_sends_normally(self, sender, sample_download_result):

@@ -55,6 +55,7 @@ def sample_goal_event() -> GoalEvent:
         home_score=1,
         away_score=0,
         timestamp=datetime(2026, 4, 15, 20, 30, 0, tzinfo=timezone.utc),
+        home_scored=True,
     )
 
 

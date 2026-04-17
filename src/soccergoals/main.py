@@ -121,6 +121,11 @@ class Orchestrator:
                 event.scorer, event.minute,
                 status="no_clip",
                 reddit_post_id=post.post_id,
+                media_url=post.media_url,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                home_scored=event.home_scored,
+                disallowed=event.disallowed,
             )
             return
 
@@ -133,7 +138,12 @@ class Orchestrator:
                 event.scorer, event.minute,
                 status="failed",
                 reddit_post_id=post.post_id,
+                media_url=post.media_url,
                 error_message="Download failed",
+                home_score=event.home_score,
+                away_score=event.away_score,
+                home_scored=event.home_scored,
+                disallowed=event.disallowed,
             )
             return
 
@@ -145,8 +155,13 @@ class Orchestrator:
                 event.scorer, event.minute,
                 status="sent",
                 reddit_post_id=post.post_id,
+                media_url=post.media_url,
                 file_path=str(download.file_path),
                 telegram_msg_id=result.message_id,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                home_scored=event.home_scored,
+                disallowed=event.disallowed,
             )
         else:
             await self._store.record_goal(
@@ -154,12 +169,21 @@ class Orchestrator:
                 event.scorer, event.minute,
                 status="send_failed",
                 reddit_post_id=post.post_id,
+                media_url=post.media_url,
                 file_path=str(download.file_path),
                 error_message=result.error,
+                home_score=event.home_score,
+                away_score=event.away_score,
+                home_scored=event.home_scored,
+                disallowed=event.disallowed,
             )
 
     async def _retry_failed(self) -> None:
-        """Retry goals that previously failed, with exponential backoff."""
+        """Retry goals that previously failed, with exponential backoff.
+
+        Uses stored media_url instead of re-scanning Reddit, so retries
+        work even after the original post has aged off r/soccer/new.
+        """
         pending = await self._store.get_pending_retries(self._config.max_retries)
         if not pending:
             return
@@ -169,6 +193,7 @@ class Orchestrator:
 
         for row in pending:
             retry_count = row["retry_count"]
+            event_hash = row["event_hash"]
 
             # Exponential backoff: wait 2^retry_count poll intervals before retrying
             updated = datetime.fromisoformat(row["updated_at"])
@@ -181,39 +206,53 @@ class Orchestrator:
             event_id = row["event_id"]
             scorer = row["scorer"]
             minute = row["minute"]
-            reddit_post_id = row.get("reddit_post_id")
+            home_team = row.get("home_team") or ""
+            away_team = row.get("away_team") or ""
+            media_url = row.get("media_url")
 
             logger.info(
                 "Retrying goal %s %d' (attempt %d/%d)",
                 scorer, minute, retry_count + 1, self._config.max_retries,
             )
 
-            # Re-scan for this goal's clip
-            scan_results = await self._scanner.scan_new_posts(
-                self._config.monitored_teams
-            )
-            # Find a matching post for this event's scorer+minute
-            matched = None
-            for sr in scan_results:
-                if sr.event.scorer == scorer and sr.event.minute == minute:
-                    matched = sr
-                    break
-
-            if not matched or not matched.post.media_url:
-                await self._store.update_status(
-                    matched.event.home_team if matched else "",
-                    matched.event.away_team if matched else "",
+            # If we have no media URL, bump retry count and move on
+            if not media_url:
+                logger.info(
+                    "No media URL stored for %s %d', bumping retry count",
                     scorer, minute,
-                    status="no_clip",
+                )
+                await self._store.bump_retry(
+                    event_hash, status="no_clip",
+                    error_message="No media URL available for retry",
                 )
                 continue
 
-            download = await self._downloader.download(matched.post, matched.event)
+            # Build lightweight objects from stored data for re-download
+            post = RedditPost(
+                post_id=row.get("reddit_post_id") or "",
+                title="",
+                url=media_url,
+                media_url=media_url,
+                score=0,
+                created_utc=now,
+            )
+            event = GoalEvent(
+                event_id=event_id,
+                scorer=scorer,
+                minute=minute,
+                home_team=home_team,
+                away_team=away_team,
+                home_score=row.get("home_score") or 0,
+                away_score=row.get("away_score") or 0,
+                timestamp=now,
+                home_scored=None if row.get("home_scored") is None else bool(row["home_scored"]),
+                disallowed=bool(row.get("disallowed", 0)),
+            )
+
+            download = await self._downloader.download(post, event)
             if not download:
-                await self._store.update_status(
-                    matched.event.home_team, matched.event.away_team,
-                    scorer, minute,
-                    status="failed",
+                await self._store.bump_retry(
+                    event_hash, status="failed",
                     error_message="Download failed on retry",
                 )
                 continue
@@ -221,18 +260,16 @@ class Orchestrator:
             result = await self._sender.send_goal_clip(download)
             if result.success:
                 await self._store.record_goal(
-                    matched.event.event_id,
-                    matched.event.home_team, matched.event.away_team,
+                    event_id, home_team, away_team,
                     scorer, minute,
                     status="sent",
-                    reddit_post_id=matched.post.post_id,
+                    reddit_post_id=row.get("reddit_post_id"),
+                    media_url=media_url,
                     telegram_msg_id=result.message_id,
                 )
             else:
-                await self._store.update_status(
-                    matched.event.home_team, matched.event.away_team,
-                    scorer, minute,
-                    status="send_failed",
+                await self._store.bump_retry(
+                    event_hash, status="send_failed",
                     error_message=result.error,
                 )
 

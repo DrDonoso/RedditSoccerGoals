@@ -122,7 +122,8 @@ class MediaDownloader:
             "yt-dlp",
             "--no-playlist",
             "--no-warnings",
-            "-f", "best[ext=mp4]/best",
+            "-f", "bv*[ext=mp4]+ba[ext=m4a]/bv*+ba/best[ext=mp4]/best",
+            "--merge-output-format", "mp4",
             "-o", f"{output_template}.%(ext)s",
             "--", url,
         ]

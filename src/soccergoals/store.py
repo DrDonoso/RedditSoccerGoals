@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS processed_goals (
     event_hash      TEXT UNIQUE NOT NULL,
     scorer          TEXT NOT NULL,
     minute          INTEGER NOT NULL,
+    home_team       TEXT NOT NULL DEFAULT '',
+    away_team       TEXT NOT NULL DEFAULT '',
+    home_score      INTEGER NOT NULL DEFAULT 0,
+    away_score      INTEGER NOT NULL DEFAULT 0,
+    home_scored     INTEGER,
+    disallowed      INTEGER NOT NULL DEFAULT 0,
+    media_url       TEXT,
     status          TEXT NOT NULL,
     reddit_post_id  TEXT,
     file_path       TEXT,
@@ -34,6 +41,16 @@ CREATE TABLE IF NOT EXISTS seen_posts (
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
+
+_MIGRATIONS = [
+    "ALTER TABLE processed_goals ADD COLUMN home_team TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE processed_goals ADD COLUMN away_team TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE processed_goals ADD COLUMN media_url TEXT",
+    "ALTER TABLE processed_goals ADD COLUMN home_score INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE processed_goals ADD COLUMN away_score INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE processed_goals ADD COLUMN home_scored INTEGER",
+    "ALTER TABLE processed_goals ADD COLUMN disallowed INTEGER NOT NULL DEFAULT 0",
+]
 
 
 def _strip_accents(text: str) -> str:
@@ -78,6 +95,13 @@ class StateStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
         await self._db.commit()
+        # Run migrations for existing databases (safe to re-run).
+        for stmt in _MIGRATIONS:
+            try:
+                await self._db.execute(stmt)
+            except Exception:
+                pass  # Column already exists
+        await self._db.commit()
         logger.info("State store initialized at %s", self._db_path)
 
     async def close(self) -> None:
@@ -121,29 +145,44 @@ class StateStore:
         file_path: str | None = None,
         telegram_msg_id: int | None = None,
         error_message: str | None = None,
+        media_url: str | None = None,
+        home_score: int = 0,
+        away_score: int = 0,
+        home_scored: bool | None = None,
+        disallowed: bool = False,
     ) -> None:
         """Insert or update a goal record."""
         h = _event_hash(home_team, away_team, scorer, minute)
         assert self._db is not None
         now = datetime.now(timezone.utc).isoformat()
+        home_scored_int = None if home_scored is None else int(home_scored)
         await self._db.execute(
             """
             INSERT INTO processed_goals
-                (event_id, event_hash, scorer, minute, status,
-                 reddit_post_id, file_path, telegram_msg_id, error_message,
-                 created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (event_id, event_hash, scorer, minute, home_team, away_team,
+                 home_score, away_score, home_scored, disallowed,
+                 media_url, status, reddit_post_id, file_path,
+                 telegram_msg_id, error_message, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(event_hash) DO UPDATE SET
                 status = excluded.status,
+                home_team = COALESCE(NULLIF(excluded.home_team, ''), home_team),
+                away_team = COALESCE(NULLIF(excluded.away_team, ''), away_team),
+                home_score = CASE WHEN excluded.home_score != 0 THEN excluded.home_score ELSE home_score END,
+                away_score = CASE WHEN excluded.away_score != 0 THEN excluded.away_score ELSE away_score END,
+                home_scored = COALESCE(excluded.home_scored, home_scored),
+                disallowed = CASE WHEN excluded.disallowed != 0 THEN excluded.disallowed ELSE disallowed END,
+                media_url = COALESCE(excluded.media_url, media_url),
                 reddit_post_id = COALESCE(excluded.reddit_post_id, reddit_post_id),
                 file_path = COALESCE(excluded.file_path, file_path),
                 telegram_msg_id = COALESCE(excluded.telegram_msg_id, telegram_msg_id),
                 error_message = excluded.error_message,
                 updated_at = excluded.updated_at
             """,
-            (event_id, h, scorer, minute, status,
-             reddit_post_id, file_path, telegram_msg_id, error_message,
-             now, now),
+            (event_id, h, scorer, minute, home_team, away_team,
+             home_score, away_score, home_scored_int, int(disallowed),
+             media_url, status, reddit_post_id, file_path,
+             telegram_msg_id, error_message, now, now),
         )
         await self._db.commit()
 
@@ -175,7 +214,9 @@ class StateStore:
         assert self._db is not None
         async with self._db.execute(
             """
-            SELECT event_id, scorer, minute, status, retry_count,
+            SELECT event_id, event_hash, scorer, minute, home_team,
+                   away_team, home_score, away_score, home_scored,
+                   disallowed, media_url, status, retry_count,
                    error_message, updated_at, reddit_post_id
             FROM processed_goals
             WHERE status IN ('failed', 'send_failed', 'no_clip')
@@ -186,3 +227,19 @@ class StateStore:
         ) as cursor:
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
+
+    async def bump_retry(self, event_hash: str, status: str = "failed",
+                         error_message: str | None = None) -> None:
+        """Increment retry_count for a goal identified by its hash."""
+        assert self._db is not None
+        now = datetime.now(timezone.utc).isoformat()
+        await self._db.execute(
+            """
+            UPDATE processed_goals
+            SET status = ?, error_message = ?, retry_count = retry_count + 1,
+                updated_at = ?
+            WHERE event_hash = ?
+            """,
+            (status, error_message, now, event_hash),
+        )
+        await self._db.commit()

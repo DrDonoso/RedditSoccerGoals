@@ -15,6 +15,8 @@ class GoalEvent:
     home_score: int
     away_score: int
     timestamp: datetime
+    home_scored: bool | None = None
+    disallowed: bool = False
 
 
 @dataclass
