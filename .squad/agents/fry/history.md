@@ -61,3 +61,14 @@
 - Poller keeps in-memory `_known_goals` dict per fixture to avoid re-emitting goals within the same process lifetime.
 - Temp file cleanup: after Telegram send (`finally` block in sender) + sweep on shutdown.
 - `__main__.py` delegates to `main()` — Dockerfile ENTRYPOINT uses `python -m soccergoals.main`.
+
+### Youth / academy team filter — 2026-04-21
+
+**Scope:** Skip goals from youth/academy/reserve teams in the scanner.
+
+**Files updated (1):**
+- `scanner.py` — Added `_YOUTH_TEAM_RE` compiled regex (module-level) matching U13–U23, Sub-13–Sub-23, Youth, Academy, Juvenil, Primavera, Reserve(s), B team, Roman numeral II suffix. Added `_is_youth_team(name)` helper. Inserted check in `scan_new_posts()` right after extracting team names, before the monitored-teams filter — if either team triggers the youth regex, the post is skipped via `continue`.
+
+**Key patterns:**
+- Youth regex uses `\b` word boundaries for most patterns; Roman numeral `II` anchored to end-of-string to avoid false positives on names containing "II".
+- Filter runs before fuzzy team matching to short-circuit cheaply.

@@ -12,6 +12,7 @@ from soccergoals.scanner import (
     _clean_scorer,
     _extract_media_url,
     _fuzzy_match_team,
+    _is_youth_team,
     _make_event_id,
     _normalize_team,
 )
@@ -122,6 +123,52 @@ class TestCleanScorer:
 
     def test_case_insensitive(self):
         assert _clean_scorer("Bellingham Great Goal") == "Bellingham"
+
+
+# ── Youth team detection ────────────────────────────────────────────
+
+class TestIsYouthTeam:
+    def test_u19_suffix(self):
+        assert _is_youth_team("Club Brugge U19") is True
+
+    def test_u18_suffix(self):
+        assert _is_youth_team("Real Madrid U18") is True
+
+    def test_u17_suffix(self):
+        assert _is_youth_team("Barcelona U17") is True
+
+    def test_u21_suffix(self):
+        assert _is_youth_team("Ajax U21") is True
+
+    def test_u23_suffix(self):
+        assert _is_youth_team("Manchester City U23") is True
+
+    def test_senior_team_no_suffix(self):
+        assert _is_youth_team("Real Madrid") is False
+
+    def test_senior_team_with_number_in_name(self):
+        assert _is_youth_team("Schalke 04") is False
+
+    def test_youth_keyword(self):
+        assert _is_youth_team("Arsenal Youth") is True
+
+    def test_sub_19_format(self):
+        assert _is_youth_team("Flamengo Sub-19") is True
+
+    def test_sub_17_format(self):
+        assert _is_youth_team("Santos Sub-17") is True
+
+    def test_primavera(self):
+        assert _is_youth_team("Inter Primavera") is True
+
+    def test_juvenil(self):
+        assert _is_youth_team("Barcelona Juvenil") is True
+
+    def test_reserves(self):
+        assert _is_youth_team("Liverpool Reserves") is True
+
+    def test_case_insensitive(self):
+        assert _is_youth_team("Real Madrid u19") is True
 
 
 # ── Media URL extraction ────────────────────────────────────────────
@@ -323,3 +370,16 @@ class TestRedditGoalScanner:
         assert len(results) == 1
         assert results[0].event.scorer == "Igor Matanović"
         assert results[0].event.home_scored is False
+
+    async def test_filters_youth_teams(self, scanner):
+        post_html = _make_html_post(
+            "p8",
+            "Club Brugge U19 [1] - 1 Real Madrid U19 - Tobias Lund-Jensen 64'",
+            "https://streamff.link/v/youth",
+        )
+        resp = _make_html_response(_make_html_page(post_html))
+        scanner._client = AsyncMock()
+        scanner._client.get = AsyncMock(return_value=resp)
+
+        results = await scanner.scan_new_posts(["Club Brugge", "Real Madrid"])
+        assert len(results) == 0

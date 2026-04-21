@@ -69,12 +69,29 @@ _SCORER_QUALIFIERS_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Youth / academy / reserve team indicators — matched at the end of a team name
+_YOUTH_TEAM_RE = re.compile(
+    r"(?:"
+    r"\bU-?(?:1[3-9]|2[0-3])\b"            # U13–U23 (with optional hyphen)
+    r"|\bSub-?(?:1[3-9]|2[0-3])\b"          # Sub-13 to Sub-23
+    r"|\b(?:Youth|Academy|Juvenil|Primavera|Reserves?)\b"
+    r"|\bB\s+team\b"                         # "B team"
+    r"|\s+II$"                                # Roman numeral II at end of name
+    r")",
+    re.IGNORECASE,
+)
+
 
 def _clean_scorer(name: str) -> str:
     """Remove qualifier phrases (great goal, penalty, etc.) from scorer name."""
     cleaned = _SCORER_QUALIFIERS_RE.sub("", name)
     # Collapse multiple spaces and strip
     return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
+def _is_youth_team(name: str) -> bool:
+    """Return True if *name* looks like a youth / academy / reserve team."""
+    return _YOUTH_TEAM_RE.search(name) is not None
 
 
 TEAM_ALIASES: dict[str, str] = {
@@ -267,6 +284,10 @@ class RedditGoalScanner:
 
                     home_team = match.group("home_team").strip()
                     away_team = match.group("away_team").strip()
+
+                    # Skip youth / academy / reserve team goals
+                    if _is_youth_team(home_team) or _is_youth_team(away_team):
+                        continue
 
                     if not (
                         _fuzzy_match_team(home_team, monitored_teams)
