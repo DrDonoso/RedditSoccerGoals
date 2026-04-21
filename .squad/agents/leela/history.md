@@ -48,6 +48,16 @@
 - Two known variants: with brackets (`[1]`) and without brackets (`1`)
 - Scoring team detection must rely on `GoalEvent.scoring_team` from the football API, never on Reddit title brackets
 - Reddit search queries should be keyword-based (scorer + teams + score) rather than bracket-format-dependent
+
+### 2026-04-21 — Version Management Strategy
+- Recommended git-tag-driven semver with `setuptools-scm` — zero ceremony, git tags are the single source of truth
+- `pyproject.toml` version becomes dynamic (no hardcoded string to maintain)
+- Versions bump only on explicit `git tag -a vX.Y.Z` + push, NOT on every push to main
+- Every push to main still deploys `latest` Docker tag (no change to current behavior)
+- Rejected python-semantic-release (overkill for hobby project) and bump2version (unmaintained)
+- CI workflow needs: extract version from git tag, add versioned Docker tag on tag-push events
+- Key files: `.github/workflows/docker-deploy.yml`, `pyproject.toml`
+- Decision filed: `.squad/decisions/inbox/leela-versioning-strategy.md`
 - Architecture doc updated; decision filed: `.squad/decisions/inbox/leela-title-format-variants.md`
 
 ### 2026-04-15 — Docker Hosting & Env Var Config
