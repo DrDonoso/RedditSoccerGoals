@@ -82,6 +82,27 @@ _YOUTH_TEAM_RE = re.compile(
 )
 
 
+# Zero-width and directional Unicode characters that Reddit titles may contain
+_INVISIBLE_CHARS_RE = re.compile(
+    "["
+    "\u200b"  # ZERO WIDTH SPACE
+    "\u200c"  # ZERO WIDTH NON-JOINER
+    "\u200d"  # ZERO WIDTH JOINER
+    "\u200e"  # LEFT-TO-RIGHT MARK
+    "\u200f"  # RIGHT-TO-LEFT MARK
+    "\ufeff"  # BYTE ORDER MARK / ZERO WIDTH NO-BREAK SPACE
+    "\u2060"  # WORD JOINER
+    "\u2066-\u2069"  # directional isolates
+    "\u202a-\u202e"  # directional formatting
+    "]+"
+)
+
+
+def _strip_invisible_chars(text: str) -> str:
+    """Remove zero-width and directional Unicode characters from text."""
+    return _INVISIBLE_CHARS_RE.sub("", text)
+
+
 def _clean_scorer(name: str) -> str:
     """Remove qualifier phrases (great goal, penalty, etc.) from scorer name."""
     cleaned = _SCORER_QUALIFIERS_RE.sub("", name)
@@ -278,7 +299,8 @@ class RedditGoalScanner:
                         continue
 
                     title = post_data.get("title", "")
-                    match = GOAL_TITLE_PATTERN.match(title)
+                    clean_title = _strip_invisible_chars(title)
+                    match = GOAL_TITLE_PATTERN.match(clean_title)
                     if not match:
                         continue
 

@@ -72,3 +72,14 @@
 **Key patterns:**
 - Youth regex uses `\b` word boundaries for most patterns; Roman numeral `II` anchored to end-of-string to avoid false positives on names containing "II".
 - Filter runs before fuzzy team matching to short-circuit cheaply.
+
+### Invisible Unicode character stripping — 2026-04-22
+
+**Scope:** Fix missed goals caused by zero-width Unicode characters in Reddit titles breaking the `GOAL_TITLE_PATTERN` regex.
+
+**Files updated (1):**
+- `scanner.py` — Added `_INVISIBLE_CHARS_RE` compiled regex and `_strip_invisible_chars()` function to remove zero-width/directional Unicode chars (U+200B–U+200F, U+FEFF, U+2060, U+2066–U+2069, U+202A–U+202E). Applied in `scan_new_posts()` via a `clean_title` local variable used for regex matching only; original title preserved in `RedditPost` for display.
+
+**Key patterns:**
+- Strip before match, keep original for display — `clean_title` is local to the matching block.
+- Pre-compiled character class regex for performance.

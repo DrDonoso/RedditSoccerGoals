@@ -15,6 +15,7 @@ from soccergoals.scanner import (
     _is_youth_team,
     _make_event_id,
     _normalize_team,
+    _strip_invisible_chars,
 )
 
 
@@ -61,7 +62,86 @@ class TestGoalTitlePattern:
         assert m.group("minute") == "90"
 
 
-# ── Team normalization & fuzzy match ────────────────────────────────
+# ── Invisible Unicode stripping ─────────────────────────────────────
+
+
+class TestStripInvisibleChars:
+    def test_ltr_marks_in_minute(self):
+        title = "Real Madrid 2 - [1] Deportivo Alaves - Toni Martinez 90\u200e+\u200e3\u200e'\u200e"
+        assert _strip_invisible_chars(title) == "Real Madrid 2 - [1] Deportivo Alaves - Toni Martinez 90+3'"
+
+    def test_mixed_invisible_chars(self):
+        title = "Team A \u200b1\u200e - 0\ufeff Team B - Player 45'"
+        result = _strip_invisible_chars(title)
+        assert "\u200b" not in result
+        assert "\u200e" not in result
+        assert "\ufeff" not in result
+        assert "Team A 1 - 0 Team B - Player 45'" == result
+
+    def test_no_invisible_chars_unchanged(self):
+        title = "Real Madrid [1] - 0 Barcelona - Vinícius Júnior 23'"
+        assert _strip_invisible_chars(title) == title
+
+
+class TestGoalTitlePatternUnicode:
+    """GOAL_TITLE_PATTERN matching on titles after invisible-char stripping."""
+
+    def test_stoppage_time_with_ltr_marks(self):
+        raw = "Real Madrid 2 - [1] Deportivo Alaves - Toni Martinez 90\u200e+\u200e3\u200e'\u200e"
+        cleaned = _strip_invisible_chars(raw)
+        m = GOAL_TITLE_PATTERN.match(cleaned)
+        assert m is not None
+        assert m.group("home_team") == "Real Madrid"
+        assert m.group("home_score") == "2"
+        assert m.group("away_score") == "1"
+        assert m.group("away_team") == "Deportivo Alaves"
+        assert m.group("scorer") == "Toni Martinez"
+        assert m.group("minute") == "90"
+
+    def test_simple_minute_with_ltr_marks(self):
+        raw = "Barcelona [3] - 1 Real Madrid - Lamine Yamal 45\u200e'\u200e"
+        cleaned = _strip_invisible_chars(raw)
+        m = GOAL_TITLE_PATTERN.match(cleaned)
+        assert m is not None
+        assert m.group("home_team") == "Barcelona"
+        assert m.group("home_score") == "3"
+        assert m.group("away_score") == "1"
+        assert m.group("away_team") == "Real Madrid"
+        assert m.group("scorer") == "Lamine Yamal"
+        assert m.group("minute") == "45"
+
+    def test_another_team_with_ltr_marks(self):
+        raw = "Espanyol 0 - [1] Celta - Iago Aspas 67\u200e'\u200e"
+        cleaned = _strip_invisible_chars(raw)
+        m = GOAL_TITLE_PATTERN.match(cleaned)
+        assert m is not None
+        assert m.group("home_team") == "Espanyol"
+        assert m.group("away_team") == "Celta"
+        assert m.group("scorer") == "Iago Aspas"
+        assert m.group("minute") == "67"
+
+    def test_stoppage_time_clean(self):
+        """90+3' without invisible chars — baseline sanity check."""
+        m = GOAL_TITLE_PATTERN.match(
+            "Real Madrid [2] - 1 Deportivo Alaves - Toni Martinez 90+3'"
+        )
+        assert m is not None
+        assert m.group("minute") == "90"
+
+    def test_first_half_stoppage_time_with_ltr_marks(self):
+        raw = "Chelsea [1] - 0 Arsenal - Palmer 45\u200e+\u200e2\u200e'\u200e"
+        cleaned = _strip_invisible_chars(raw)
+        m = GOAL_TITLE_PATTERN.match(cleaned)
+        assert m is not None
+        assert m.group("scorer") == "Palmer"
+        assert m.group("minute") == "45"
+
+    def test_first_half_stoppage_time_clean(self):
+        m = GOAL_TITLE_PATTERN.match(
+            "Chelsea [1] - 0 Arsenal - Palmer 45+2'"
+        )
+        assert m is not None
+        assert m.group("minute") == "45"
 
 class TestNormalizeTeam:
     def test_alias_resolution(self):
