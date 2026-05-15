@@ -21,6 +21,18 @@ STREAMFF_VIDEO_RE = re.compile(
 STREAMFF_CDN_ID_RE = re.compile(r"streamff\.(?:com|link)/v/([a-zA-Z0-9]+)")
 STREAMFF_CDN_BASE = "https://cdn.streamff.one"
 
+# streamin.link/v/{id} or streamin.me/v/{id} → c-cdn.streamin.top/uploads/{id}.mp4
+STREAMIN_CDN_ID_RE = re.compile(r"streamin\.(?:link|me)/v/([a-zA-Z0-9]+)")
+STREAMIN_CDN_BASE = "https://c-cdn.streamin.top/uploads"
+
+# streamain.com/{slug}/watch → embed at streamain.com/embed/{slug}
+STREAMAIN_SLUG_RE = re.compile(r"streamain\.com/(?:en/)?([a-zA-Z0-9_-]+)/watch")
+STREAMAIN_EMBED_BASE = "https://streamain.com/embed"
+STREAMAIN_MP4_RE = re.compile(
+    r'https?://cdn\.streamain\.com/[^"\'>\s]+\.mp4[^"\'>\s]*',
+    re.IGNORECASE,
+)
+
 
 class MediaDownloader:
     """Downloads goal clip videos from streamff.link or via yt-dlp fallback."""
@@ -56,6 +68,20 @@ class MediaDownloader:
                 return result
             logger.info("Streamff direct download failed, falling back to yt-dlp")
 
+        # streamin.link / streamin.me — direct CDN download
+        if "streamin.link" in media_url or "streamin.me" in media_url:
+            result = await self._download_streamin(media_url, dest, event)
+            if result:
+                return result
+            logger.info("Streamin direct download failed, falling back to yt-dlp")
+
+        # streamain.com — embed page scraping
+        if "streamain.com" in media_url:
+            result = await self._download_streamain(media_url, dest, event)
+            if result:
+                return result
+            logger.info("Streamain direct download failed, falling back to yt-dlp")
+
         # Fallback: yt-dlp subprocess
         return await self._download_ytdlp(media_url, dest, event)
 
@@ -86,6 +112,61 @@ class MediaDownloader:
             return await self._download_file(video_url, dest, event, url)
         except httpx.HTTPError as exc:
             logger.warning("Streamff download failed: %s", exc)
+            return None
+
+    async def _download_streamin(
+        self, url: str, dest: Path, event: GoalEvent
+    ) -> DownloadResult | None:
+        """Download from streamin.link or streamin.me via direct CDN URL."""
+        try:
+            id_match = STREAMIN_CDN_ID_RE.search(url)
+            if id_match:
+                video_url = f"{STREAMIN_CDN_BASE}/{id_match.group(1)}.mp4"
+                logger.info("Downloading from streamin CDN: %s", video_url)
+                return await self._download_file(video_url, dest, event, url)
+
+            # Fallback: fetch embed page
+            # streamin.link/v/{id} → streamin.link/embed/{id}
+            embed_url = url.replace("/v/", "/embed/")
+            page_resp = await self._client.get(embed_url)
+            page_resp.raise_for_status()
+            match = STREAMFF_VIDEO_RE.search(page_resp.text)
+            if not match:
+                logger.debug("Could not extract video URL from streamin embed page")
+                return None
+            return await self._download_file(match.group(1), dest, event, url)
+        except httpx.HTTPError as exc:
+            logger.warning("Streamin download failed: %s", exc)
+            return None
+
+    async def _download_streamain(
+        self, url: str, dest: Path, event: GoalEvent
+    ) -> DownloadResult | None:
+        """Download from streamain.com via embed page scraping."""
+        try:
+            # Extract slug from URL: streamain.com/{slug}/watch or streamain.com/en/{slug}/watch
+            slug_match = STREAMAIN_SLUG_RE.search(url)
+            if not slug_match:
+                logger.debug("Could not extract slug from streamain URL: %s", url)
+                return None
+
+            slug = slug_match.group(1)
+            embed_url = f"{STREAMAIN_EMBED_BASE}/{slug}"
+            logger.info("Fetching streamain embed: %s", embed_url)
+
+            page_resp = await self._client.get(embed_url)
+            page_resp.raise_for_status()
+
+            mp4_match = STREAMAIN_MP4_RE.search(page_resp.text)
+            if not mp4_match:
+                logger.debug("Could not extract MP4 URL from streamain embed page")
+                return None
+
+            video_url = mp4_match.group(0)
+            logger.info("Downloading from streamain CDN: %s", video_url)
+            return await self._download_file(video_url, dest, event, url)
+        except httpx.HTTPError as exc:
+            logger.warning("Streamain download failed: %s", exc)
             return None
 
     async def _download_file(
