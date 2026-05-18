@@ -8,7 +8,7 @@ from pathlib import Path
 from telegram import Bot
 
 from soccergoals.config import Config
-from soccergoals.models import DownloadResult, SendResult
+from soccergoals.models import DownloadResult, GoalEvent, SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -211,3 +211,30 @@ class TelegramSender:
         finally:
             # Clean up temp file after send attempt
             download.file_path.unlink(missing_ok=True)
+
+    async def send_error_alert(self, event: GoalEvent, error: str) -> None:
+        """Send an error notification to the Telegram channel."""
+
+        score_str = f"{event.home_score}-{event.away_score}"
+        if event.home_scored is not None:
+            if event.home_scored:
+                score_str = f"[{event.home_score}]-{event.away_score}"
+            else:
+                score_str = f"{event.home_score}-[{event.away_score}]"
+
+        text = (
+            f"\u26a0\ufe0f Error in {event.home_team} {score_str} {event.away_team}\n"
+            f"Goal: {event.scorer} {event.minute}'\n"
+            f"Error: {error}"
+        )
+        try:
+            await self._bot.send_message(
+                chat_id=self._channel_id,
+                text=text,
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=15,
+            )
+            logger.info("Sent error alert to Telegram for %s %d'", event.scorer, event.minute)
+        except Exception:
+            logger.exception("Failed to send error alert to Telegram")

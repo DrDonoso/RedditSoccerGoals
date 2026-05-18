@@ -115,7 +115,9 @@ class Orchestrator:
         )
 
         if not post.media_url:
+            error_msg = "No video clip found in Reddit post"
             logger.warning("No clip found for %s %d'", event.scorer, event.minute)
+            await self._sender.send_error_alert(event, error_msg)
             await self._store.record_goal(
                 event.event_id, event.home_team, event.away_team,
                 event.scorer, event.minute,
@@ -132,7 +134,9 @@ class Orchestrator:
         # Download
         download = await self._downloader.download(post, event)
         if not download:
+            error_msg = f"Download failed from {post.media_url}"
             logger.warning("Download failed for %s %d'", event.scorer, event.minute)
+            await self._sender.send_error_alert(event, error_msg)
             await self._store.record_goal(
                 event.event_id, event.home_team, event.away_team,
                 event.scorer, event.minute,
@@ -164,6 +168,7 @@ class Orchestrator:
                 disallowed=event.disallowed,
             )
         else:
+            await self._sender.send_error_alert(event, result.error or "Telegram send failed")
             await self._store.record_goal(
                 event.event_id, event.home_team, event.away_team,
                 event.scorer, event.minute,
