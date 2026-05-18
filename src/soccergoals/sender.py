@@ -238,3 +238,18 @@ class TelegramSender:
             logger.info("Sent error alert to Telegram for %s %d'", event.scorer, event.minute)
         except Exception:
             logger.exception("Failed to send error alert to Telegram")
+
+    async def send_startup_alert(self, teams: str) -> None:
+        """Send a startup notification to the Telegram channel."""
+        text = f"\u2705 SoccerGoals arrancado\nMonitorizando: {teams}"
+        try:
+            await self._bot.send_message(
+                chat_id=self._channel_id,
+                text=text,
+                read_timeout=30,
+                write_timeout=30,
+                connect_timeout=15,
+            )
+            logger.info("Sent startup alert to Telegram")
+        except Exception:
+            logger.exception("Failed to send startup alert to Telegram")

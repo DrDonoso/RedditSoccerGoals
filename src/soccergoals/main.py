@@ -49,11 +49,13 @@ class Orchestrator:
     async def start(self) -> None:
         """Initialize components and run the main loop."""
         await self._store.init()
+        teams = ", ".join(self._config.monitored_teams)
         logger.info(
             "SoccerGoals started — monitoring %s, scanning every %ds",
-            ", ".join(self._config.monitored_teams),
+            teams,
             self._config.polling_interval,
         )
+        await self._sender.send_startup_alert(teams)
 
         try:
             while self._running:
