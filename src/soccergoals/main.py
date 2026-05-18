@@ -50,12 +50,12 @@ class Orchestrator:
         """Initialize components and run the main loop."""
         await self._store.init()
         teams = ", ".join(self._config.monitored_teams)
-        logger.info(
-            "SoccerGoals started — monitoring %s, scanning every %ds",
-            teams,
-            self._config.polling_interval,
-        )
-        await self._sender.send_startup_alert(teams)
+        logger.info("="*60)
+        logger.info("SoccerGoals started")
+        logger.info("Monitoring: %s", teams)
+        logger.info("Polling interval: %ds", self._config.polling_interval)
+        logger.info("Max post age: %d min", self._config.max_post_age_minutes)
+        logger.info("="*60)
 
         try:
             while self._running:
